@@ -5,6 +5,15 @@ const handlers = require("../notifications/notification.handler");
 const certHandler = require("../notifications/certificate.handler");
 
 const registerEvents = () => {
+
+  eventBus.on(
+  events.DOCTOR_REGISTERED,
+  handlers.handleDoctorRegistered,
+);
+eventBus.on(
+  events.DOCTOR_REGISTRATION_SUBMITTED,
+  handlers.handleDoctorRegistrationSubmitted,
+);
   // Appointment lifecycle
   eventBus.on(
     events.APPOINTMENT_REQUESTED,

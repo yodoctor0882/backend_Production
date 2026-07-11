@@ -1,5 +1,3 @@
-console.log("✅ doctor.routes loaded");
-
 const express = require("express");
 const router = express.Router();
 const doctorController = require("../controllers/doctorController");
@@ -8,10 +6,6 @@ const { allowRoles } = require("../middleware/roles");
 const { requireActiveUser } = require("../middleware/activeUser");
 const upload = require("../middleware/upload.middleware");
 const uploadDoctorDocs = require("../middleware/uploadDoctorDocs");
-
-router.get("/test123", (req, res) => {
-  res.json({ ok: true });
-});
 
 // ─────────────────────────────────────────
 // Dashboard
@@ -101,37 +95,8 @@ router.put(
   doctorController.respondAppointment,
 );
 
-// ─────────────────────────────────────────
-// Notifications
-// ✅ FIX: Specific routes PEHLE, :id wala BAAD MEIN
-// ─────────────────────────────────────────
-router.get(
-  "/notifications/unread-count", // ✅ specific — pehle
-  verifyToken,
-  allowRoles("DOCTOR"),
-  doctorController.getDoctorUnreadCount,
-);
 
-router.put(
-  "/notifications/read-all", // ✅ specific — pehle
-  verifyToken,
-  allowRoles("DOCTOR"),
-  doctorController.markAllDoctorNotificationsRead,
-);
 
-router.get(
-  "/notifications",
-  verifyToken,
-  allowRoles("DOCTOR"),
-  doctorController.getDoctorNotifications,
-);
-
-router.put(
-  "/notifications/:id/read", // ✅ dynamic — baad mein
-  verifyToken,
-  allowRoles("DOCTOR"),
-  doctorController.markDoctorNotificationRead,
-);
 
 // ─────────────────────────────────────────
 // Appointments
@@ -327,5 +292,4 @@ router.post(
 );
 
 router.get("/alldoctors", doctorController.getAllDoctors);
-
 module.exports = router;

@@ -1,54 +1,72 @@
-// exports.handleAppointmentRequested = (data) => {
-//   console.log("Appointment requested", data);
-// };
-
-// exports.handleAppointmentConfirmed = (data) => {
-//   console.log("Appointment confirmed", data);
-// };
-
-// exports.handleAppointmentRejected = (data) => {
-//   console.log("Appointment rejected", data);
-// };
-
-// exports.handleAppointmentCancelledByPatient = (data) => {
-//   console.log("Appointment cancelled by patient", data);
-// };
-
-// exports.handleAppointmentCancelledByAdmin = (data) => {
-//   console.log("Appointment cancelled by admin", data);
-// };
-
-// exports.handleAppointmentCompleted = (data) => {
-//   console.log("Appointment completed", data);
-// };
-
-// exports.handleAppointmentReminder = (data) => {
-//   console.log("Appointment reminder", data);
-// };
-
-// exports.handleDoctorApproved = (data) => {
-//   console.log("Doctor approved", data);
-// };
-
-// exports.handleDoctorRejected = (data) => {
-//   console.log("Doctor rejected", data);
-// };
-
-// exports.handleVisitSummaryAdded = (data) => {
-//   console.log("Visit summary added", data);
-// };
-
 const { createAppNotification } = require("../utils/notification.db");
 const notifications = require("../utils/notification.messages");
 
 const { sendEmail } = require("../utils/email.service");
+const {
+  sendRealtimeNotification,
+} = require("../services/realtimeNotification.service");
+
+
+exports.handleDoctorRegistered = async (data) => {
+  try {
+    const adminData = notifications.DOCTOR_REGISTERED.admin;
+
+    await createAppNotification({
+      role: "admin",
+      title: adminData.title,
+      message: adminData.message.replace(
+        "{doctorName}",
+        data.doctorName
+      ),
+    });
+
+    sendRealtimeNotification({
+      role: "admin",
+      title: adminData.title,
+      message: adminData.message.replace(
+        "{doctorName}",
+        data.doctorName
+      ),
+      type: "notification",
+    });
+  } catch (err) {
+    console.error("Error:", err);
+  }
+};
+
+exports.handleDoctorRegistrationSubmitted = async (data) => {
+  try {
+    const adminData =
+      notifications.DOCTOR_REGISTRATION_SUBMITTED.admin;
+
+    await createAppNotification({
+      role: "admin",
+      title: adminData.title,
+      message: adminData.message.replace(
+        "{doctorName}",
+        data.doctorName
+      ),
+    });
+
+    sendRealtimeNotification({
+      role: "admin",
+      title: adminData.title,
+      message: adminData.message.replace(
+        "{doctorName}",
+        data.doctorName
+      ),
+      type: "notification",
+    });
+
+  } catch (err) {
+    console.error(err);
+  }
+};
 
 
 // 📥 Appointment Requested
 exports.handleAppointmentRequested = async (data) => {
   try {
-    console.log("Appointment requested", data);
-
     const doctorData = notifications.APPOINTMENT_REQUESTED.doctor;
 
     await createAppNotification({
@@ -59,13 +77,27 @@ exports.handleAppointmentRequested = async (data) => {
       appointmentId: data.appointmentId,
     });
 
-    await sendEmail({
+    // Realtime first
+    sendRealtimeNotification({
+      userId: data.doctorId,
+      title: doctorData.title,
+      message: doctorData.message,
+      type: "notification",
+      data: {
+        appointmentId: data.appointmentId,
+      },
+    });
+
+    // Email should not block notification
+    sendEmail({
       to: data.doctorEmail,
       subject: doctorData.title,
       html: `<p>${doctorData.icon} ${doctorData.message}</p>`,
+    }).catch((err) => {
+      console.error("[EMAIL ERROR]", err);
     });
   } catch (err) {
-    console.error("Error:", err);
+    console.error("[NOTIFICATION ERROR]", err);
   }
 };
 
@@ -86,11 +118,22 @@ exports.handleAppointmentConfirmed = async (data) => {
       appointmentId: data.appointmentId,
     });
 
-    await sendEmail({
+    sendRealtimeNotification({
+      userId: data.patientId,
+      role: "patient",
+      title: patientData.title,
+      message: patientData.message,
+      type: "notification",
+      data: {
+        appointmentId: data.appointmentId,
+      },
+    });
+
+    sendEmail({
       to: data.patientEmail,
       subject: patientData.title,
       html: `<p>${patientData.icon} ${patientData.message}</p>`,
-    });
+    }).catch((err) => console.error("[EMAIL ERROR]", err));
 
     // Doctor
     await createAppNotification({
@@ -101,11 +144,22 @@ exports.handleAppointmentConfirmed = async (data) => {
       appointmentId: data.appointmentId,
     });
 
-    await sendEmail({
+    sendRealtimeNotification({
+      userId: data.doctorId,
+      role: "doctor",
+      title: doctorData.title,
+      message: doctorData.message,
+      type: "notification",
+      data: {
+        appointmentId: data.appointmentId,
+      },
+    });
+
+    sendEmail({
       to: data.doctorEmail,
       subject: doctorData.title,
       html: `<p>${doctorData.icon} ${doctorData.message}</p>`,
-    });
+    }).catch((err) => console.error("[EMAIL ERROR]", err));
   } catch (err) {
     console.error("Error:", err);
   }
@@ -126,11 +180,22 @@ exports.handleAppointmentRejected = async (data) => {
       appointmentId: data.appointmentId,
     });
 
-    await sendEmail({
+    sendRealtimeNotification({
+      userId: data.patientId,
+      role: "patient",
+      title: patientData.title,
+      message: patientData.message,
+      type: "notification",
+      data: {
+        appointmentId: data.appointmentId,
+      },
+    });
+
+    sendEmail({
       to: data.patientEmail,
       subject: patientData.title,
       html: `<p>${patientData.icon} ${patientData.message}</p>`,
-    });
+    }).catch((err) => console.error("[EMAIL ERROR]", err));
   } catch (err) {
     console.error("Error:", err);
   }
@@ -151,11 +216,22 @@ exports.handleAppointmentCancelledByPatient = async (data) => {
       appointmentId: data.appointmentId,
     });
 
-    await sendEmail({
+    sendRealtimeNotification({
+      userId: data.doctorId,
+      role: "doctor",
+      title: doctorData.title,
+      message: doctorData.message,
+      type: "notification",
+      data: {
+        appointmentId: data.appointmentId,
+      },
+    });
+
+    sendEmail({
       to: data.doctorEmail,
       subject: doctorData.title,
       html: `<p>${doctorData.icon} ${doctorData.message}</p>`,
-    });
+    }).catch((err) => console.error("[EMAIL ERROR]", err));
   } catch (err) {
     console.error("Error:", err);
   }
@@ -176,10 +252,6 @@ exports.handleAppointmentCancelledByAdmin = async (data) => {
 
 exports.handleAppointmentCancelledByDoctor = async (data) => {
   try {
-    const notifications = require("./notification.messages");
-    const { sendEmail } = require("./email.service");
-    const { createAppNotification } = require("./notification.db");
-
     const title = "⚠️ Appointment Cancelled by Doctor";
     const message = `Your appointment was cancelled by the doctor. Reason: ${data.reason}`;
 
@@ -193,12 +265,22 @@ exports.handleAppointmentCancelledByDoctor = async (data) => {
     });
 
     // 📩 Email
-    await sendEmail({
+    sendRealtimeNotification({
+      userId: data.patientId,
+      role: "patient",
+      title,
+      message,
+      type: "notification",
+      data: {
+        appointmentId: data.appointmentId,
+      },
+    });
+
+    sendEmail({
       to: data.patientEmail,
       subject: title,
       html: `<p>${message}</p>`,
-    });
-
+    }).catch((err) => console.error("[EMAIL ERROR]", err));
   } catch (err) {
     console.error("Error:", err);
   }
@@ -219,10 +301,23 @@ exports.handleAppointmentCompleted = async (data) => {
       appointmentId: data.appointmentId,
     });
 
-    await sendEmail({
+    sendRealtimeNotification({
+      userId: data.patientId,
+      role: "patient",
+      title: patientData.title,
+      message: patientData.message,
+      type: "notification",
+      data: {
+        appointmentId: data.appointmentId,
+      },
+    });
+
+    sendEmail({
       to: data.patientEmail,
       subject: patientData.title,
       html: `<p>${patientData.icon} ${patientData.message}</p>`,
+    }).catch((err) => {
+      console.error("[EMAIL ERROR]", err);
     });
   } catch (err) {
     console.error("Error:", err);
@@ -244,10 +339,23 @@ exports.handleAppointmentReminder = async (data) => {
       appointmentId: data.appointmentId,
     });
 
-    await sendEmail({
+    sendRealtimeNotification({
+      userId: data.patientId,
+      role: "patient",
+      title: patientData.title,
+      message: patientData.message,
+      type: "notification",
+      data: {
+        appointmentId: data.appointmentId,
+      },
+    });
+
+    sendEmail({
       to: data.patientEmail,
       subject: patientData.title,
       html: `<p>${patientData.icon} ${patientData.message}</p>`,
+    }).catch((err) => {
+      console.error("[EMAIL ERROR]", err);
     });
   } catch (err) {
     console.error("Error:", err);
@@ -268,10 +376,20 @@ exports.handleDoctorApproved = async (data) => {
       message: doctorData.message,
     });
 
-    await sendEmail({
+    sendRealtimeNotification({
+      userId: data.doctorId,
+      role: "doctor",
+      title: doctorData.title,
+      message: doctorData.message,
+      type: "notification",
+    });
+
+    sendEmail({
       to: data.doctorEmail,
       subject: doctorData.title,
       html: `<p>${doctorData.icon} ${doctorData.message}</p>`,
+    }).catch((err) => {
+      console.error("[EMAIL ERROR]", err);
     });
   } catch (err) {
     console.error("Error:", err);
@@ -292,10 +410,20 @@ exports.handleDoctorRejected = async (data) => {
       message: doctorData.message,
     });
 
-    await sendEmail({
+    sendRealtimeNotification({
+      userId: data.doctorId,
+      role: "doctor",
+      title: doctorData.title,
+      message: doctorData.message,
+      type: "notification",
+    });
+
+    sendEmail({
       to: data.doctorEmail,
       subject: doctorData.title,
       html: `<p>${doctorData.icon} ${doctorData.message}</p>`,
+    }).catch((err) => {
+      console.error("[EMAIL ERROR]", err);
     });
   } catch (err) {
     console.error("Error:", err);
@@ -305,8 +433,34 @@ exports.handleDoctorRejected = async (data) => {
 // 📝 Visit Summary
 exports.handleVisitSummaryAdded = async (data) => {
   try {
-    console.log("Visit summary added", data);
-    // optional: add notification/email if needed
+    await createAppNotification({
+      userId: data.patientId,
+      role: "patient",
+      title: data.title,
+      message: data.message,
+      appointmentId: data.appointmentId,
+    });
+
+    sendRealtimeNotification({
+      userId: data.patientId,
+      role: "patient",
+      title: data.title,
+      message: data.message,
+      type: "notification",
+      data: {
+        appointmentId: data.appointmentId,
+      },
+    });
+
+    if (data.patientEmail) {
+      sendEmail({
+        to: data.patientEmail,
+        subject: data.title,
+        html: `<p>${data.message}</p>`,
+      }).catch((err) => {
+        console.error("[EMAIL ERROR]", err);
+      });
+    }
   } catch (err) {
     console.error("Error:", err);
   }

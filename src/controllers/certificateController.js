@@ -1,11 +1,8 @@
 const db = require("../config/db");
 const eventBus = require("../events/eventBus");
-// const puppeteer = require("puppeteer");
-// const pdf = require("html-pdf-node");
 const PDFDocument = require("pdfkit");
 const path = require("path");
 const fs = require("fs");
-const generatePDF = require("../services/pdfService");
 
 const EVENTS = require("../events/notification.events");
 const generateHTML = require("../utils/certificateTemplate");
@@ -14,7 +11,7 @@ const QRCode = require("qrcode");
 const { generateCertificateId } = require("../utils/generateCertId");
 
 const { calculateExpiry } = require("../utils/calculateExpiry");
-const html_to_pdf = require("html-pdf-node");
+const generatePDF = require("../services/pdfService");
 
 // createRequest Api
 

@@ -1,4 +1,22 @@
 module.exports = {
+
+  DOCTOR_REGISTERED: {
+  admin: {
+    title: "New Doctor Registered",
+    message: "{doctorName} has registered and is waiting for verification",
+    icon: "👨‍⚕️",
+  },
+},
+
+DOCTOR_REGISTRATION_SUBMITTED: {
+  admin: {
+    title: "New Doctor Registration",
+    message:
+      "{doctorName} has submitted registration and is waiting for approval.",
+    icon: "👨‍⚕️",
+  },
+},
+
   DOCTOR_APPROVED: {
     doctor: {
       title: "Account Approved",

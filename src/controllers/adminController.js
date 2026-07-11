@@ -1,12 +1,9 @@
 const db = require("../config/db");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { DOCTOR_REJECTED } = require("../events/notification.events");
 const eventBus = require("../events/eventBus");
-const { DOCTOR_APPROVED } = require("../events/notification.events");
-const {
-  APPOINTMENT_CANCELLED_BY_ADMIN,
-} = require("../events/notification.events");
+const EVENTS = require("../events/notification.events");
+
 
 // GET /admin/dashboard
 // ✅ FIXED: added try/catch — was crashing silently on any DB error
@@ -58,10 +55,13 @@ exports.getDoctors = async (req, res) => {
         d.action_reason,
         d.rating,
         d.experience_years,
-        u.profile_image
+        u.profile_image,
+         COALESCE(s.status, 'pending') AS subscription_status
       FROM doctors d
       JOIN users u ON u.id = d.user_id
-      LEFT JOIN doctor_clinics dc ON dc.doctor_id = d.id   -- ✅ FIX
+      LEFT JOIN doctor_clinics dc ON dc.doctor_id = d.id   
+       LEFT JOIN subscriptions s
+        ON s.user_id = d.user_id
     `;
 
     const params = [];
@@ -120,18 +120,39 @@ exports.updateDoctorStatus = async (req, res) => {
       [status, reason || null, doctorId],
     );
 
-    await connection.commit();
+    const [[doctorInfo]] = await connection.query(
+  `SELECT d.user_id,
+          d.doctorName,
+          u.email
+   FROM doctors d
+   JOIN users u ON d.user_id = u.id
+   WHERE d.id = ?`,
+  [doctorId]
+);
 
-    eventBus.emit("DOCTOR_STATUS_UPDATED", {
-      doctorId,
-      doctorName: doctor.doctorName,
-      status,
-      reason,
-    });
+await connection.commit();
 
-    res.json({
-      message: `Doctor marked as ${status}`,
-    });
+if (status === "APPROVED") {
+  eventBus.emit(DOCTOR_APPROVED, {
+    doctorId: doctorInfo.user_id,
+    doctorName: doctorInfo.doctorName,
+    doctorEmail: doctorInfo.email,
+  });
+}
+
+if (status === "REJECTED") {
+  eventBus.emit(DOCTOR_REJECTED, {
+    doctorId: doctorInfo.user_id,
+    doctorName: doctorInfo.doctorName,
+    doctorEmail: doctorInfo.email,
+    reason,
+  });
+}
+
+return res.json({
+  message: `Doctor marked as ${status}`,
+});
+
   } catch (err) {
     await connection.rollback();
     res.status(500).json({
@@ -579,32 +600,40 @@ exports.toggleDoctorActive = async (req, res) => {
   }
 };
 
-// GET /admin/notifications
-exports.getAdminNotifications = async (req, res) => {
-  try {
-    const [notifications] = await db.query(
-      `SELECT id, title, message, is_read, created_at
-       FROM notifications
-       WHERE receiver_role = 'ADMIN'
-       ORDER BY created_at DESC`,
-    );
 
-    res.json({ notifications });
-  } catch (err) {
-    res.status(500).json({ message: "Server error" });
-  }
-};
 
 // getPatients
 // ✅ FIXED: added try/catch
 exports.getPatients = async (req, res) => {
   try {
-    const [patients] = await db.query(
-      `SELECT id, email, is_active FROM users WHERE role='PATIENT'`,
-    );
-    res.json({ patients });
+    const [patients] = await db.query(`
+      SELECT
+        p.id,
+        p.user_id,
+        p.fullName,
+        p.phone AS mobile,
+        p.email,
+        p.gender,
+        p.dob,
+        u.profile_image,
+        u.is_active
+      FROM patients p
+      INNER JOIN users u
+        ON p.user_id = u.id
+      ORDER BY p.id DESC
+    `);
+
+    res.json({
+      success: true,
+      patients,
+    });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    console.error(err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
+    });
   }
 };
 
@@ -612,12 +641,24 @@ exports.getPatients = async (req, res) => {
 // ✅ FIXED: added try/catch
 exports.blockUser = async (req, res) => {
   try {
-    await db.query(`UPDATE users SET is_active=FALSE WHERE id=?`, [
-      req.params.id,
-    ]);
-    res.json({ message: "User blocked" });
+    const { id } = req.params;
+
+    await db.query(
+      "UPDATE users SET is_active = FALSE WHERE id = ? AND role='PATIENT'",
+      [id]
+    );
+
+    res.json({
+      success: true,
+      message: "Patient blocked successfully",
+    });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    console.error(err);
+
+    res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
   }
 };
 
@@ -625,15 +666,29 @@ exports.blockUser = async (req, res) => {
 // ✅ FIXED: added try/catch
 exports.unblockUser = async (req, res) => {
   try {
-    await db.query(`UPDATE users SET is_active=TRUE WHERE id=?`, [
-      req.params.id,
-    ]);
-    res.json({ message: "User unblocked" });
+    const { id } = req.params;
+
+    await db.query(
+      "UPDATE users SET is_active = TRUE WHERE id = ? AND role='PATIENT'",
+      [id]
+    );
+
+    res.json({
+      success: true,
+      message: "Patient unblocked successfully",
+    });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    console.error(err);
+
+    res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
   }
 };
 
+// getAllAppointments
+// ✅ FIXED: appointment_shift → appointment_slot + added try/catch
 exports.getAllAppointments = async (req, res) => {
   try {
     const { doctorId, date, status } = req.query;
@@ -687,6 +742,8 @@ exports.getAllAppointments = async (req, res) => {
   }
 };
 
+// forceCancelAppointment
+// ✅ FIXED: added try/catch
 exports.forceCancelAppointment = async (req, res) => {
   try {
     const appointmentId = req.params.id;
@@ -714,6 +771,8 @@ exports.forceCancelAppointment = async (req, res) => {
   }
 };
 
+// getAdminAnalytics
+// ✅ FIXED: status='verified' → status='APPROVED' + added try/catch
 exports.getAdminAnalytics = async (req, res) => {
   try {
     const [[data]] = await db.query(`
@@ -729,17 +788,7 @@ exports.getAdminAnalytics = async (req, res) => {
   }
 };
 
-// notification
-exports.markNotificationRead = async (req, res) => {
-  try {
-    await db.query(`UPDATE notifications SET is_read = 1 WHERE id = ?`, [
-      req.params.id,
-    ]);
-    res.json({ message: "Marked as read" });
-  } catch (err) {
-    res.status(500).json({ message: "Server error" });
-  }
-};
+
 
 exports.getAllContactRequests = async (req, res) => {
   try {
@@ -852,9 +901,8 @@ exports.addLabTest = async (req, res) => {
     } = req.body;
 
     // Uploaded image path
-    const image = req.file
-      ? `${process.env.BASE_URL}/uploads/lab-tests/${req.file.filename}`
-      : null;
+
+    const image = `/uploads/lab-tests/${req.file.filename}`;
 
     const [result] = await db.query(
       `
@@ -924,7 +972,6 @@ exports.addLabTest = async (req, res) => {
     });
   }
 };
-
 exports.getLabTests = async (req, res) => {
   try {
     const [rows] = await db.query(`
@@ -995,6 +1042,8 @@ exports.getLabTestById = async (req, res) => {
 
 exports.updateLabTest = async (req, res) => {
   try {
+    console.log("FILE:", req.file);
+    console.log("BODY:", req.body);
     const { id } = req.params;
 
     const {
@@ -1009,12 +1058,25 @@ exports.updateLabTest = async (req, res) => {
       tier,
       type,
       description,
-      image,
       badge,
       is_popular,
       is_active,
       includes = [],
     } = req.body;
+
+    // Purani image nikalo
+    const [rows] = await db.query("SELECT image FROM lab_tests WHERE id=?", [
+      id,
+    ]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Lab Test not found",
+      });
+    }
+
+    const image = `/uploads/lab-tests/${req.file.filename}`;
 
     await db.query(
       `
@@ -1050,13 +1112,14 @@ exports.updateLabTest = async (req, res) => {
         type,
         description,
         image,
-        badge,
-        is_popular,
-        is_active,
+        badge || null,
+        is_popular ? 1 : 0,
+        is_active ? 1 : 0,
         id,
       ],
     );
 
+    // Purane includes delete karo
     await db.query(
       `
       DELETE FROM lab_test_includes
@@ -1065,7 +1128,8 @@ exports.updateLabTest = async (req, res) => {
       [id],
     );
 
-    if (includes.length) {
+    // Naye includes add karo
+    if (includes && includes.length > 0) {
       for (const item of includes) {
         await db.query(
           `
@@ -1084,8 +1148,11 @@ exports.updateLabTest = async (req, res) => {
     res.json({
       success: true,
       message: "Test Updated Successfully",
+      image,
     });
   } catch (error) {
+    console.error("UPDATE LAB TEST ERROR:", error);
+
     res.status(500).json({
       success: false,
       message: error.message,
@@ -1116,9 +1183,8 @@ exports.addLabPackage = async (req, res) => {
     } = req.body;
 
     // Get uploaded image URL/path
-    const image = req.file
-      ? `${process.env.BASE_URL}/uploads/lab-tests/${req.file.filename}`
-      : null;
+
+    const image = `/uploads/lab-tests/${req.file.filename}`;
 
     const [result] = await conn.query(
       `
@@ -1284,7 +1350,6 @@ exports.updateLabPackage = async (req, res) => {
       name,
       tagline,
       description,
-      image,
       price,
       mrp,
       tier,
@@ -1292,7 +1357,19 @@ exports.updateLabPackage = async (req, res) => {
       is_popular,
       is_active,
       tests,
+      parameters,
+      report_time,
+      fasting,
     } = req.body;
+
+    // Purani image nikalo
+    const [oldPackage] = await conn.query(
+      "SELECT image FROM lab_tests WHERE id=?",
+      [id],
+    );
+
+    // Agar nayi image upload hui hai to use karo, warna purani image rakho
+    const image = `/uploads/lab-tests/${req.file.filename}`;
 
     await conn.query(
       `
@@ -1308,7 +1385,10 @@ exports.updateLabPackage = async (req, res) => {
         tier=?,
         badge=?,
         is_popular=?,
-        is_active=?
+        is_active=?,
+        parameters=?,
+        report_time=?,
+        fasting=?
       WHERE id=?
       `,
       [
@@ -1320,32 +1400,22 @@ exports.updateLabPackage = async (req, res) => {
         price,
         mrp,
         tier,
-        badge,
-        is_popular,
-        is_active,
+        badge || null,
+        is_popular ? 1 : 0,
+        is_active ? 1 : 0,
+        parameters || null,
+        report_time || null,
+        fasting || null,
         id,
       ],
     );
 
-    await conn.query(
-      `
-      DELETE FROM lab_package_tests
-      WHERE package_id=?
-      `,
-      [id],
-    );
+    await conn.query(`DELETE FROM lab_package_tests WHERE package_id=?`, [id]);
 
     if (tests?.length) {
       for (const testId of tests) {
         await conn.query(
-          `
-          INSERT INTO lab_package_tests
-          (
-            package_id,
-            test_id
-          )
-          VALUES (?,?)
-          `,
+          `INSERT INTO lab_package_tests (package_id, test_id) VALUES (?, ?)`,
           [id, testId],
         );
       }
@@ -1356,6 +1426,7 @@ exports.updateLabPackage = async (req, res) => {
     res.json({
       success: true,
       message: "Package Updated Successfully",
+      image,
     });
   } catch (error) {
     await conn.rollback();

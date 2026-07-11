@@ -13,10 +13,34 @@ const globalLimiter = rateLimit({
 
   legacyHeaders: false,
 
+
+  
+
   message: {
     success: false,
     message:
       "Too many requests, please try again later.",
+  },
+});
+
+
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
+
+  handler: (req, res) => {
+    console.log(
+      "Rate limit hit =>",
+      req.method,
+      req.originalUrl,
+      req.ip
+    );
+
+    return res.status(429).json({
+      success: false,
+      message: "Too many requests, please try again later.",
+    });
   },
 });
 
