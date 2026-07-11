@@ -8,7 +8,6 @@ const { allowRoles } = require("../middleware/roles");
 const { requireActiveUser } = require("../middleware/activeUser");
 
 const upload = require("../middleware/upload.middleware");
-
 const uploadLabImage = require("../middleware/uploadLabImage");
 
 // Dashboard
@@ -74,14 +73,6 @@ router.put(
   adminController.updateDoctorStatus,
 );
 
-// Notifications
-router.get(
-  "/notifications",
-  verifyToken,
-  requireActiveUser,
-  allowRoles("ADMIN"),
-  adminController.getAdminNotifications,
-);
 
 router.get(
   "/analytics/appointments",
@@ -91,14 +82,6 @@ router.get(
   adminController.getAppointmentAnalytics,
 );
 
-// Admin notifications mark as read
-router.put(
-  "/notifications/:id/read",
-  verifyToken,
-  requireActiveUser,
-  allowRoles("ADMIN"),
-  adminController.markNotificationRead,
-);
 
 router.get(
   "/contact-requests",
@@ -124,15 +107,20 @@ router.delete(
   adminController.deleteContactRequest,
 );
 
-
-
-
 router.post(
   "/lab/tests",
   verifyToken,
   allowRoles("ADMIN"),
   uploadLabImage.single("image"),
   adminController.addLabTest,
+);
+
+router.put(
+  "/lab/tests/:id",
+  verifyToken,
+  allowRoles("ADMIN"),
+  uploadLabImage.single("image"),
+  adminController.updateLabTest,
 );
 
 router.get(
@@ -148,15 +136,6 @@ router.get(
   allowRoles("ADMIN"),
   adminController.getLabTestById,
 );
-
-router.put(
-  "/lab/tests/:id",
-  verifyToken,
-  allowRoles("ADMIN"),
-  adminController.updateLabTest,
-);
-
-
 
 router.post(
   "/lab/packages",
@@ -184,9 +163,9 @@ router.put(
   "/lab/packages/:id",
   verifyToken,
   allowRoles("ADMIN"),
+  uploadLabImage.single("image"),
   adminController.updateLabPackage,
 );
-
 
 router.get(
   "/lab/bookings",
@@ -228,7 +207,7 @@ router.patch(
   "/lab/tests/:id/status",
   verifyToken,
   allowRoles("ADMIN"),
-  adminController.updateTestStatus
+  adminController.updateTestStatus,
 );
 
 // Update Package Status
@@ -236,6 +215,33 @@ router.patch(
   "/lab/packages/:id/status",
   verifyToken,
   allowRoles("ADMIN"),
-  adminController.updatePackageStatus
+  adminController.updatePackageStatus,
 );
+
+// ================= Patients =================
+
+router.get(
+  "/patients",
+  verifyToken,
+  requireActiveUser,
+  allowRoles("ADMIN"),
+  adminController.getPatients,
+);
+
+router.put(
+  "/patients/:id/block",
+  verifyToken,
+  requireActiveUser,
+  allowRoles("ADMIN"),
+  adminController.blockUser,
+);
+
+router.put(
+  "/patients/:id/unblock",
+  verifyToken,
+  requireActiveUser,
+  allowRoles("ADMIN"),
+  adminController.unblockUser,
+);
+
 module.exports = router;

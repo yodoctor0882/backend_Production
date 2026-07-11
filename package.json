@@ -33,6 +33,7 @@
     "qrcode": "^1.5.4",
     "razorpay": "^2.9.6",
     "semver": "^7.7.4",
+    "socket.io": "^4.8.3",
     "uuid": "^13.0.2"
   },
   "devDependencies": {

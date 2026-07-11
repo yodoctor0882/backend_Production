@@ -3,15 +3,11 @@ const bcrypt = require("bcryptjs");
 const fs = require("fs");
 const path = require("path");
 const eventBus = require("../events/eventBus");
+const EVENTS = require("../events/notification.events");
 const jwt = require("jsonwebtoken");
 const puppeteer = require("puppeteer");
 const QRCode = require("qrcode");
 const generateQRHTML = require("../utils/qrTemplate");
-const {
-  APPOINTMENT_CONFIRMED,
-  APPOINTMENT_REJECTED,
-  APPOINTMENT_REMINDER,
-} = require("../events/notification.events");
 
 const upload = require("../middleware/upload.middleware");
 const uploadDoctorDocs = require("../middleware/uploadDoctorDocs");
@@ -128,19 +124,14 @@ exports.createStep1 = async (req, res) => {
       [userId, (fullName || "").trim(), gender, bio?.trim() || null],
     );
 
-    await connection.commit();
+ await connection.commit();
 
-    // ✅ FIXED: notification now sent only after successful new user creation
-    await db.query(
-      `INSERT INTO notifications (title, message, receiver_role)
-   VALUES (?, ?, ?)`,
-      [
-        "New Doctor Registered",
-        `${fullName.trim()} has registered and is waiting for verification`,
-        "ADMIN",
-      ],
-    );
+eventBus.emit(EVENTS.DOCTOR_REGISTERED, {
+  doctorId: userId,
+  doctorName: fullName.trim(),
+});
 
+  
     const token = jwt.sign(
       { id: userId, role: "DOCTOR" },
       process.env.JWT_SECRET,
@@ -780,17 +771,12 @@ exports.finalSubmitRegistration = async (req, res) => {
       [userId],
     );
 
-    await connection.query(
-      `INSERT INTO notifications (title, message, receiver_role)
-       VALUES (?, ?, ?)`,
-      [
-        "New Doctor Registration",
-        `${doctorRow?.doctorName || "A doctor"} has submitted registration and is waiting for approval.`,
-        "ADMIN",
-      ],
-    );
+await connection.commit();
 
-    await connection.commit();
+eventBus.emit(EVENTS.DOCTOR_REGISTRATION_SUBMITTED, {
+  doctorId: userId,
+  doctorName: doctorRow.doctorName,
+});
 
     return res.json({
       message: "Registration submitted successfully",
@@ -837,12 +823,15 @@ exports.respondAppointment = async (req, res) => {
 
     // ✅ Now correct query
     const [[appointment]] = await connection.query(
-      `SELECT patient_id, appointment_date
-       FROM appointments
-       WHERE id = ?
-       AND doctor_id = ?
-       AND status = 'PENDING'
-       FOR UPDATE`,
+      `SELECT a.patient_id,
+          a.appointment_date,
+          u.email AS patient_email
+   FROM appointments a
+   JOIN users u ON a.patient_id = u.id
+   WHERE a.id = ?
+   AND a.doctor_id = ?
+   AND a.status = 'PENDING'
+   FOR UPDATE`,
       [appointmentId, doctorId],
     );
 
@@ -875,31 +864,31 @@ exports.respondAppointment = async (req, res) => {
       [newStatus, appointmentId],
     );
 
-    // ✅ Notification
-    await connection.query(
-      `INSERT INTO notifications
-       (receiver_id, receiver_role, title, message, appointment_id)
-       VALUES (?, 'PATIENT', ?, ?, ?)`,
-      [
-        appointment.patient_id,
-        newStatus === "ACCEPTED"
-          ? "Appointment Accepted"
-          : "Appointment Rejected",
-        newStatus === "ACCEPTED"
-          ? "Doctor has accepted your appointment."
-          : "Doctor has rejected your appointment.",
-        appointmentId,
-      ],
+    const [[doctor]] = await connection.query(
+      `SELECT u.email
+   FROM doctors d
+   JOIN users u ON d.user_id = u.id
+   WHERE d.id = ?`,
+      [doctorId],
     );
 
     await connection.commit();
 
-    eventBus.emit("APPOINTMENT_STATUS_UPDATED", {
-      appointmentId,
-      patientId: appointment.patient_id,
-      doctorId,
-      status: newStatus,
-    });
+    if (newStatus === "ACCEPTED") {
+      eventBus.emit(EVENTS.APPOINTMENT_CONFIRMED, {
+        appointmentId,
+        patientId: appointment.patient_id,
+        patientEmail: appointment.patient_email,
+        doctorId: userId,
+        doctorEmail: doctor.email,
+      });
+    } else {
+      eventBus.emit(EVENTS.APPOINTMENT_REJECTED, {
+        appointmentId,
+        patientId: appointment.patient_id,
+        patientEmail: appointment.patient_email,
+      });
+    }
 
     return res.json({
       message: `Appointment ${newStatus.toLowerCase()}`,
@@ -915,67 +904,169 @@ exports.respondAppointment = async (req, res) => {
   }
 };
 
+// exports.getDashboard = async (req, res) => {
+//   const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
+//     req.user.id,
+//   ]);
+
+//   if (!doc) {
+//     return res.status(404).json({ message: "Doctor not found" });
+//   }
+
+//   const doctorId = doc.id;
+
+//   try {
+//     // doctor name
+//     const [[doctor]] = await db.query(
+//       `SELECT doctorName FROM doctors WHERE user_id = ?`,
+//       [req.user.id],
+//     );
+
+//     if (!doctor) {
+//       return res.status(404).json({ message: "Doctor not found" });
+//     }
+
+//     // dashboard stats
+//     const [stats] = await db.query(
+//       `SELECT
+//   COUNT(CASE WHEN status='PENDING' THEN 1 END) AS pendingRequests,
+
+//   COUNT(CASE
+//         WHEN appointment_date = CURDATE()
+//         AND status IN ('ACCEPTED','IN_PROGRESS')
+//        THEN 1 END) AS todayQueue,
+
+//   COUNT(CASE
+//         WHEN appointment_date = DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+//        THEN 1 END) AS tomorrow,
+
+//   COUNT(CASE
+//         WHEN appointment_date = DATE_ADD(CURDATE(), INTERVAL 2 DAY)
+//        THEN 1 END) AS nextDay,
+
+//   COUNT(CASE
+//         WHEN status='COMPLETED'
+//         AND appointment_date = CURDATE()
+//        THEN 1 END) AS completedToday,
+
+//     COUNT(
+//     DISTINCT COALESCE(patient_id, family_member_id, CONCAT('W', id))
+//   ) AS totalPatients
+
+// FROM appointments
+// WHERE doctor_id = ?`,
+//       [doctorId],
+//     );
+
+//     res.json({
+//       ...stats[0],
+//       doctorName: doctor?.doctorName || "",
+//     });
+//   } catch (err) {
+//     console.error("Dashboard error:", err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// };
+
 exports.getDashboard = async (req, res) => {
   const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
     req.user.id,
   ]);
 
   if (!doc) {
-    return res.status(404).json({ message: "Doctor not found" });
+    return res.status(404).json({
+      message: "Doctor not found",
+    });
   }
 
   const doctorId = doc.id;
 
   try {
-    // doctor name
     const [[doctor]] = await db.query(
-      `SELECT doctorName FROM doctors WHERE user_id = ?`,
+      `
+      SELECT
+        doctorName,
+        specialization,
+        experience_years,
+        is_available
+      FROM doctors
+      WHERE user_id = ?
+      `,
       [req.user.id],
     );
 
     if (!doctor) {
-      return res.status(404).json({ message: "Doctor not found" });
+      return res.status(404).json({
+        message: "Doctor not found",
+      });
     }
 
-    // dashboard stats
     const [stats] = await db.query(
-      `SELECT
-  COUNT(CASE WHEN status='PENDING' THEN 1 END) AS pendingRequests,
+      `
+      SELECT
+        COUNT(CASE WHEN status='PENDING' THEN 1 END) AS pendingRequests,
 
-  COUNT(CASE
-        WHEN appointment_date = CURDATE()
-        AND status IN ('ACCEPTED','IN_PROGRESS')
-       THEN 1 END) AS todayQueue,
+        COUNT(
+          CASE
+            WHEN appointment_date = CURDATE()
+            AND status IN ('ACCEPTED','IN_PROGRESS')
+            THEN 1
+          END
+        ) AS todayQueue,
 
-  COUNT(CASE
-        WHEN appointment_date = DATE_ADD(CURDATE(), INTERVAL 1 DAY)
-       THEN 1 END) AS tomorrow,
+        COUNT(
+          CASE
+            WHEN appointment_date = DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+            THEN 1
+          END
+        ) AS tomorrow,
 
-  COUNT(CASE
-        WHEN appointment_date = DATE_ADD(CURDATE(), INTERVAL 2 DAY)
-       THEN 1 END) AS nextDay,
+        COUNT(
+          CASE
+            WHEN appointment_date = DATE_ADD(CURDATE(), INTERVAL 2 DAY)
+            THEN 1
+          END
+        ) AS nextDay,
 
-  COUNT(CASE
-        WHEN status='COMPLETED'
-        AND appointment_date = CURDATE()
-       THEN 1 END) AS completedToday,
+        COUNT(
+          CASE
+            WHEN status='COMPLETED'
+            AND appointment_date = CURDATE()
+            THEN 1
+          END
+        ) AS completedToday,
 
-    COUNT(
-    DISTINCT COALESCE(patient_id, family_member_id, CONCAT('W', id))
-  ) AS totalPatients
+        COUNT(
+          DISTINCT COALESCE(patient_id, family_member_id, CONCAT('W', id))
+        ) AS totalPatients
 
-FROM appointments
-WHERE doctor_id = ?`,
+      FROM appointments
+      WHERE doctor_id = ?
+      `,
       [doctorId],
     );
 
-    res.json({
-      ...stats[0],
-      doctorName: doctor?.doctorName || "",
+    return res.json({
+      doctor: {
+        doctorName: doctor.doctorName,
+        specialization: doctor.specialization,
+        experienceYears: doctor.experience_years,
+        isAvailable: doctor.is_available,
+      },
+
+      pendingRequests: stats[0].pendingRequests,
+      todayQueue: stats[0].todayQueue,
+      tomorrow: stats[0].tomorrow,
+      nextDay: stats[0].nextDay,
+      completedToday: stats[0].completedToday,
+      totalPatients: stats[0].totalPatients,
     });
   } catch (err) {
     console.error("Dashboard error:", err);
-    res.status(500).json({ message: "Server error" });
+
+    return res.status(500).json({
+      message: "Server error",
+    });
   }
 };
 
@@ -1818,68 +1909,6 @@ exports.getDoctorAppointmentHistory = async (req, res) => {
   }
 };
 
-// DOCTOR – getDoctorNotifications
-exports.getDoctorNotifications = async (req, res) => {
-  const userId = req.user.id;
-  const page = Number(req.query.page) || 1;
-  const limit = 20;
-  const offset = (page - 1) * limit;
-
-  try {
-    const [[{ total }]] = await db.query(
-      `SELECT COUNT(*) AS total
-       FROM notifications
-       WHERE receiver_id = ?
-       AND receiver_role = 'DOCTOR'`,
-      [userId],
-    );
-
-    const [notifications] = await db.query(
-      `SELECT id, title, message, appointment_id, is_read, created_at
-       FROM notifications
-       WHERE receiver_id = ?
-       AND receiver_role = 'DOCTOR'
-       ORDER BY created_at DESC
-       LIMIT ? OFFSET ?`,
-      [userId, limit, offset],
-    );
-
-    res.json({
-      notifications,
-      page,
-      total,
-      totalPages: Math.ceil(total / limit),
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Server error" });
-  }
-};
-
-// DOCTOR – getDoctorUnreadCount
-exports.getDoctorUnreadCount = async (req, res) => {
-  const userId = req.user.id;
-
-  try {
-    const [[row]] = await db.query(
-      `SELECT COUNT(*) AS count
-       FROM notifications
-       WHERE receiver_id = ?
-       AND receiver_role = 'DOCTOR'
-       AND is_read = FALSE`,
-      [userId],
-    );
-
-    return res.json({
-      unreadCount: row?.count || 0,
-    });
-  } catch (err) {
-    return res.status(500).json({
-      message: "Server error",
-      error: err.message,
-    });
-  }
-};
-
 // DOCTOR – downloadQR
 exports.downloadQR = async (req, res) => {
   const path = require("path");
@@ -1972,53 +2001,6 @@ exports.downloadQR = async (req, res) => {
   }
 };
 
-// DOCTOR – markDoctorNotificationRead
-
-exports.markDoctorNotificationRead = async (req, res) => {
-  const userId = req.user.id;
-  const { id } = req.params;
-
-  try {
-    const [result] = await db.query(
-      `UPDATE notifications
-       SET is_read = TRUE
-       WHERE id = ?
-       AND receiver_id = ?
-       AND receiver_role = 'DOCTOR'
-       AND is_read = FALSE`,
-      [id, userId],
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        message: "Notification not found or already read",
-      });
-    }
-
-    res.json({ message: "Notification marked as read" });
-  } catch (err) {
-    res.status(500).json({ message: "Server error" });
-  }
-};
-// DOCTOR – markAllDoctorNotificationsRead
-exports.markAllDoctorNotificationsRead = async (req, res) => {
-  const userId = req.user.id;
-
-  try {
-    await db.query(
-      `UPDATE notifications
-       SET is_read = TRUE
-       WHERE receiver_id = ?
-       AND receiver_role = 'DOCTOR'
-       AND is_read = FALSE`,
-      [userId],
-    );
-
-    res.json({ message: "All notifications marked as read" });
-  } catch (err) {
-    res.status(500).json({ message: "Server error" });
-  }
-};
 
 // DOCTOR – getMyQRRedirect
 
@@ -2066,34 +2048,78 @@ exports.getMyQRRedirect = async (req, res) => {
 
 // DOCTOR – getMyQR
 
+// exports.getMyQR = async (req, res) => {
+//   // const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+//   const frontendUrl = process.env.FRONTEND_URL
+//     ? process.env.FRONTEND_URL.split(",")[0].trim()
+//     : "https://yodoctor.in";
+
+//   const userId = req.user.id;
+
+//   // ✅ FIX: get doctor.id
+//   const [[doctor]] = await db.query(
+//     `SELECT id
+//      FROM doctors
+//      WHERE user_id = ?
+//      AND status = 'APPROVED'`,
+//     [userId],
+//   );
+
+//   if (!doctor) {
+//     return res.status(403).json({
+//       message: "Doctor not approved",
+//     });
+//   }
+
+//   const doctorId = doctor.id;
+
+//   const qrUrl = `${frontendUrl}/qr-redirect?doctorId=${doctorId}`;
+
+//   res.json({ doctorId, qrUrl });
+// };
+
+// DOCTOR – getMyQR
+
 exports.getMyQR = async (req, res) => {
-  // const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
   const frontendUrl = process.env.FRONTEND_URL
     ? process.env.FRONTEND_URL.split(",")[0].trim()
     : "https://yodoctor.in";
 
   const userId = req.user.id;
 
-  // ✅ FIX: get doctor.id
-  const [[doctor]] = await db.query(
-    `SELECT id 
-     FROM doctors 
-     WHERE user_id = ? 
-     AND status = 'APPROVED'`,
-    [userId],
-  );
+  try {
+    const [[doctor]] = await db.query(
+      `SELECT
+    id,
+    doctorName,
+    specialization
+FROM doctors
+WHERE user_id = ?
+AND status = 'APPROVED'`,
+      [userId],
+    );
 
-  if (!doctor) {
-    return res.status(403).json({
-      message: "Doctor not approved",
+    if (!doctor) {
+      return res.status(403).json({
+        message: "Doctor not approved",
+      });
+    }
+
+    const qrUrl = `${frontendUrl}/qr-redirect?doctorId=${doctor.id}`;
+
+    return res.json({
+      doctorId: doctor.id,
+      doctorName: doctor.doctorName,
+      specialization: doctor.specialization,
+      qrUrl,
+    });
+  } catch (err) {
+    console.error(err);
+
+    return res.status(500).json({
+      message: "Server error",
     });
   }
-
-  const doctorId = doctor.id;
-
-  const qrUrl = `${frontendUrl}/qr-redirect?doctorId=${doctorId}`;
-
-  res.json({ doctorId, qrUrl });
 };
 
 // STAFF / NURSE – Manual (Walk-in) Visit Booking
@@ -3234,11 +3260,45 @@ exports.getDoctorProfile = async (req, res) => {
   }
 };
 
+// exports.getAllDoctors = async (req, res) => {
+//   try {
+//     const [doctors] = await db.query(`
+//   SELECT
+//     d.id AS _id,
+//     d.doctorName,
+//     d.specialization,
+//     d.experience_years,
+//     d.rating,
+//     dd.file_path AS profile_image
+//   FROM doctors d
+//   LEFT JOIN doctor_documents dd
+//     ON dd.doctor_id = d.id
+//     AND dd.doc_type = 'profile'
+//   WHERE d.status = 'APPROVED'
+//   ORDER BY d.rating DESC
+//   LIMIT 5
+// `);
+
+//     return res.status(200).json({
+//       success: true,
+//       doctors,
+//     });
+//   } catch (err) {
+//     console.log(err);
+
+//     return res.status(500).json({
+//       success: false,
+//       message: "Server error",
+//       error: err.message,
+//     });
+//   }
+// };
+
 exports.getAllDoctors = async (req, res) => {
   try {
     const [doctors] = await db.query(`
   SELECT
-    d.id AS _id,
+    d.id AS id,
     d.doctorName,
     d.specialization,
     d.experience_years,

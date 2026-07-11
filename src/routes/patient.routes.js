@@ -77,26 +77,8 @@ router.post(
   patientController.submitDoctorReview,
 );
 
-// Notifications
-router.get(
-  "/notifications",
-  verifyToken,
-  patientController.getPatientNotifications,
-);
 
-// ✅ PEHLE specific route — unread-count
-router.get(
-  "/notifications/unread-count",
-  verifyToken,
-  patientController.getUnreadNotificationCount,
-);
 
-// ✅ BAAD MEIN dynamic :id route
-router.put(
-  "/notifications/:id/read",
-  verifyToken,
-  patientController.markNotificationRead,
-);
 
 // Family
 router.post("/addfamily", verifyToken, patientController.addFamilyMember);

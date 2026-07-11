@@ -1,10 +1,7 @@
 const db = require("../config/db");
 const bcrypt = require("bcryptjs");
 const eventBus = require("../events/eventBus");
-const {
-  APPOINTMENT_CANCELLED_BY_PATIENT,
-} = require("../events/notification.events");
-
+const EVENTS = require("../events/notification.events");
 const upload = require("../middleware/upload.middleware");
 
 // Add Family Members helpers
@@ -456,13 +453,119 @@ exports.changePassword = async (req, res) => {
 
 // Patient getDashboard
 
+// exports.getDashboard = async (req, res) => {
+//   const patientId = req.user.id;
+
+//   try {
+//     // ✅ 0️⃣ Patient name (ADD THIS)
+//     const [[patient]] = await db.query(
+//       `SELECT fullName FROM patients WHERE user_id = ?`,
+//       [patientId],
+//     );
+
+//     // 1️⃣ Upcoming appointments count
+//     const [[upcoming]] = await db.query(
+//       `SELECT COUNT(*) AS count
+// FROM appointments a
+// WHERE a.patient_id = ?
+// AND a.appointment_date >= CURDATE()
+// AND a.status IN ('PENDING','ACCEPTED')`,
+//       [patientId],
+//     );
+
+//     // 2️⃣ Today's active token
+//     const [[todayToken]] = await db.query(
+//       `SELECT
+//    a.id,
+//    a.appointment_type,
+//    a.appointment_slot,
+//    a.token_number
+// FROM appointments a
+// WHERE a.patient_id = ?
+// AND a.appointment_date = CURDATE()
+// AND a.appointment_type IN ('CLINIC','HOSPITAL')
+// AND a.status IN ('PENDING','ACCEPTED','IN_PROGRESS')
+// ORDER BY a.appointment_slot, a.token_number
+// LIMIT 1`,
+//       [patientId],
+//     );
+
+//     // 3️⃣ Upcoming appointments list
+//     const [appointments] = await db.query(
+//       `SELECT
+//   a.id,
+//   a.family_member_id,
+//   d.doctorName,
+//   d.degree AS qualification,
+//   d.specialization,
+// d.consultationFee AS consultationFee,
+//   dc.city,
+//   d.experience_years AS experience,
+//   d.rating,
+//   dc.clinic_name,
+//   dc.languages,
+//   dc.address,
+//   u.profile_image,
+//   a.appointment_type,
+//   a.appointment_date,
+//   a.appointment_slot,
+//   a.token_number,
+//   a.status,
+//   fm.full_name AS familyName,
+//   fm.relation
+// FROM appointments a
+// JOIN doctors d ON a.doctor_id = d.id
+// JOIN doctor_clinics dc ON a.doctor_id = dc.doctor_id
+// JOIN users u
+//   ON u.id = d.user_id
+// LEFT JOIN family_members fm
+//   ON a.family_member_id = fm.id
+// WHERE a.patient_id = ?
+// AND a.appointment_date >= CURDATE()
+// AND a.status IN ('PENDING','ACCEPTED')
+// ORDER BY a.appointment_date ASC, a.appointment_slot, a.token_number`,
+//       [patientId],
+//     );
+
+//     // ✅ FINAL RESPONSE (YEH WAHI JAGAH HAI)
+//     return res.status(200).json({
+//       patientName: patient?.fullName || "Patient", // 👈 YAHAN
+
+//       upcomingCount: upcoming.count,
+//       todayToken: todayToken
+//         ? {
+//             appointmentId: todayToken.id,
+//             type: todayToken.appointment_type,
+//             slot: todayToken.appointment_slot,
+//             token: todayToken.token_number,
+//           }
+//         : null,
+//       appointments,
+//     });
+//   } catch (err) {
+//     return res.status(500).json({
+//       message: "Server error",
+//       error: err.message,
+//     });
+//   }
+// };
+
 exports.getDashboard = async (req, res) => {
   const patientId = req.user.id;
 
   try {
     // ✅ 0️⃣ Patient name (ADD THIS)
     const [[patient]] = await db.query(
-      `SELECT fullName FROM patients WHERE user_id = ?`,
+      `
+SELECT
+    p.fullName,
+    u.email,
+    u.profile_image
+FROM patients p
+JOIN users u
+ON u.id = p.user_id
+WHERE p.user_id = ?
+`,
       [patientId],
     );
 
@@ -478,17 +581,42 @@ AND a.status IN ('PENDING','ACCEPTED')`,
 
     // 2️⃣ Today's active token
     const [[todayToken]] = await db.query(
-      `SELECT 
-   a.id,
-   a.appointment_type,
-   a.appointment_slot,
-   a.token_number
+      `SELECT
+    a.id,
+    a.doctor_id,
+    a.appointment_type,
+    a.appointment_date,
+    a.appointment_slot,
+    a.token_number,
+
+    dc.clinic_name,
+
+    d.consultation_duration,
+
+    (
+        SELECT token_number
+        FROM appointments ap
+        WHERE ap.doctor_id = a.doctor_id
+        AND ap.appointment_date = CURDATE()
+        AND ap.appointment_slot = a.appointment_slot
+        AND ap.status = 'IN_PROGRESS'
+        LIMIT 1
+    ) AS nowServing
+
 FROM appointments a
+
+JOIN doctors d
+ON d.id = a.doctor_id
+
+JOIN doctor_clinics dc
+ON dc.doctor_id = a.doctor_id
+
 WHERE a.patient_id = ?
 AND a.appointment_date = CURDATE()
 AND a.appointment_type IN ('CLINIC','HOSPITAL')
 AND a.status IN ('PENDING','ACCEPTED','IN_PROGRESS')
-ORDER BY a.appointment_slot, a.token_number
+
+ORDER BY a.appointment_slot,a.token_number
 LIMIT 1`,
       [patientId],
     );
@@ -532,7 +660,7 @@ ORDER BY a.appointment_date ASC, a.appointment_slot, a.token_number`,
 
     // ✅ FINAL RESPONSE (YEH WAHI JAGAH HAI)
     return res.status(200).json({
-      patientName: patient?.fullName || "Patient", // 👈 YAHAN
+      patientName: patient?.fullName || "Patient",
 
       upcomingCount: upcoming.count,
       todayToken: todayToken
@@ -540,10 +668,36 @@ ORDER BY a.appointment_date ASC, a.appointment_slot, a.token_number`,
             appointmentId: todayToken.id,
             type: todayToken.appointment_type,
             slot: todayToken.appointment_slot,
+
             token: todayToken.token_number,
+
+            clinicName: todayToken.clinic_name,
+
+            nowServing: todayToken.nowServing,
+
+            patientsAhead:
+              todayToken.nowServing == null
+                ? 0
+                : Math.max(todayToken.token_number - todayToken.nowServing, 0),
+
+            estimatedTime:
+              todayToken.nowServing == null
+                ? "0 mins"
+                : `${
+                    Math.max(
+                      todayToken.token_number - todayToken.nowServing,
+                      0,
+                    ) * (todayToken.consultation_duration || 5)
+                  } mins`,
           }
         : null,
       appointments,
+
+      patient: {
+        name: patient?.fullName || "Patient",
+        email: patient?.email || "",
+        image: patient?.profile_image || null,
+      },
     });
   } catch (err) {
     return res.status(500).json({
@@ -583,10 +737,14 @@ exports.searchVisitDoctors = async (req, res) => {
           d.consultationFee,
           d.experience_years AS experience,
           u.profile_image
-        FROM doctors d
-        LEFT JOIN users u ON u.id = d.user_id
-        LEFT JOIN doctor_clinics dc ON dc.doctor_id = d.id
-        WHERE d.status = 'APPROVED'
+       FROM doctors d
+LEFT JOIN users u ON u.id = d.user_id
+LEFT JOIN doctor_clinics dc ON dc.doctor_id = d.id
+INNER JOIN subscriptions s ON s.user_id = d.user_id
+
+WHERE d.status = 'APPROVED'
+AND s.status = 'active'
+AND s.current_period_end >= NOW()
         AND (
           ? = '' OR
           d.doctorName LIKE ? OR
@@ -625,6 +783,65 @@ exports.searchVisitDoctors = async (req, res) => {
   }
 };
 
+// exports.getDoctorById = async (req, res) => {
+//   const doctorId = req.params.id;
+
+//   try {
+//     // ✅ FIXED: removed d.qualification (column doesn't exist — use d.degree instead)
+//     // ✅ FIXED: removed d.available_days (column doesn't exist — availability is in
+//     //           doctor_availability table, joined below as a JSON-aggregated field)
+//     const [rows] = await db.query(
+//       `SELECT
+//   d.id AS doctorId,
+//   d.doctorName,
+//   d.specialization,
+//   d.degree,
+//   d.degree AS qualification,
+//   dc.clinic_name AS clinicName,
+//   dc.address,
+//   dc.city,
+//   d.licenseNumber,
+//   d.consultationFee,
+//   d.experience_years,
+//   d.rating,
+//   dc.languages,
+//   d.bio AS description,
+//   d.consultation_duration AS timings,
+//   u.profile_image,
+//   (
+//     SELECT JSON_ARRAYAGG(da.day_code)
+//     FROM doctor_availability da
+//     WHERE da.doctor_id = d.id
+//   ) AS availableDays
+// FROM doctors d
+// LEFT JOIN users u ON u.id = d.user_id
+// LEFT JOIN doctor_clinics dc ON dc.doctor_id = d.id
+// WHERE d.id = ?`,
+//       [doctorId],
+//     );
+
+//     if (!rows.length) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Doctor not found",
+//       });
+//     }
+
+//     res.json({
+//       success: true,
+//       doctor: rows[0],
+//     });
+//   } catch (err) {
+//     console.log(err);
+//     res.status(500).json({
+//       success: false,
+//       message: "Internal server error",
+//     });
+//   }
+// };
+
+// getCurrentToken controller
+
 exports.getDoctorById = async (req, res) => {
   const doctorId = req.params.id;
 
@@ -649,6 +866,34 @@ exports.getDoctorById = async (req, res) => {
   dc.languages,
   d.bio AS description,
   d.consultation_duration AS timings,
+  d.consultation_duration AS timings,
+(
+  SELECT JSON_OBJECT(
+    'morning',
+      CASE
+        WHEN morning_start IS NOT NULL AND morning_end IS NOT NULL
+        THEN CONCAT(
+          TIME_FORMAT(morning_start,'%h:%i %p'),
+          ' - ',
+          TIME_FORMAT(morning_end,'%h:%i %p')
+        )
+        ELSE ''
+      END,
+    'evening',
+      CASE
+        WHEN evening_start IS NOT NULL AND evening_end IS NOT NULL
+        THEN CONCAT(
+          TIME_FORMAT(evening_start,'%h:%i %p'),
+          ' - ',
+          TIME_FORMAT(evening_end,'%h:%i %p')
+        )
+        ELSE ''
+      END
+  )
+  FROM doctor_availability da
+  WHERE da.doctor_id = d.id
+  LIMIT 1
+) AS sessionTimings,
   u.profile_image,
   (
     SELECT JSON_ARRAYAGG(da.day_code)
@@ -682,7 +927,6 @@ WHERE d.id = ?`,
   }
 };
 
-// getCurrentToken controller
 exports.getCurrentToken = async (req, res) => {
   const { doctorId, appointmentDate, appointmentSlot } = req.query;
 
@@ -719,13 +963,17 @@ exports.getCurrentToken = async (req, res) => {
 
 exports.getDoctorNames = async (req, res) => {
   try {
-    const [rows] = await db.query(
-      `SELECT DISTINCT doctorName AS name
-       FROM doctors
-       WHERE status = 'APPROVED'
-       AND doctorName IS NOT NULL
-       ORDER BY doctorName`,
-    );
+    const [rows] = await db.query(`
+      SELECT DISTINCT d.doctorName AS name
+      FROM doctors d
+      JOIN subscriptions s
+        ON s.user_id = d.user_id
+      WHERE d.status = 'APPROVED'
+        AND s.status = 'active'
+        AND s.current_period_end >= NOW()
+        AND d.doctorName IS NOT NULL
+      ORDER BY d.doctorName
+    `);
 
     return res.status(200).json({
       success: true,
@@ -738,40 +986,6 @@ exports.getDoctorNames = async (req, res) => {
     });
   }
 };
-
-// getCities controller
-// ✅ FIXED: was querying 'city' from 'doctors' table — column doesn't exist there.
-// City is stored in doctor_clinics table.
-// exports.getCities = async (req, res) => {
-//   try {
-//     const [rows] = await db.query(`
-//       SELECT DISTINCT
-//         dc.city,
-//         dc.address,
-//         dc.landmark,
-//         CONCAT(
-//           dc.city,
-//           IF(dc.landmark IS NOT NULL, CONCAT(', ', dc.landmark), ''),
-//           IF(dc.address IS NOT NULL, CONCAT(', ', dc.address), '')
-//         ) AS label
-//       FROM doctor_clinics dc
-//       JOIN doctors d ON d.id = dc.doctor_id
-//       WHERE d.status = 'APPROVED'
-//         AND dc.city IS NOT NULL
-//       ORDER BY dc.city
-//     `);
-
-//     return res.status(200).json({
-//       success: true,
-//       data: rows,
-//     });
-//   } catch (err) {
-//     return res.status(500).json({
-//       success: false,
-//       message: "Internal server error",
-//     });
-//   }
-// };
 
 exports.getCities = async (req, res) => {
   try {
@@ -795,9 +1009,13 @@ exports.getCities = async (req, res) => {
           IF(dc.address IS NOT NULL, CONCAT(', ', dc.address), '')
         ) AS label
 
-      FROM doctor_clinics dc
-      JOIN doctors d ON d.id = dc.doctor_id
-      WHERE d.status = 'APPROVED'
+FROM doctor_clinics dc
+JOIN doctors d ON d.id = dc.doctor_id
+JOIN subscriptions s ON s.user_id = d.user_id
+
+WHERE d.status = 'APPROVED'
+AND s.status = 'active'
+AND s.current_period_end >= NOW()
         AND dc.city IS NOT NULL
 
         AND (
@@ -844,11 +1062,15 @@ exports.getCities = async (req, res) => {
 exports.getDiseases = async (req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT DISTINCT specialization AS name
-       FROM doctors
-       WHERE status = 'APPROVED'
-       AND specialization IS NOT NULL
-       ORDER BY specialization`,
+      `SELECT DISTINCT d.specialization AS name
+FROM doctors d
+JOIN subscriptions s
+ON s.user_id = d.user_id
+
+WHERE d.status = 'APPROVED'
+AND s.status = 'active'
+AND s.current_period_end >= NOW()
+ORDER BY d.specialization;`,
     );
 
     return res.status(200).json({
@@ -869,12 +1091,14 @@ exports.getDiseases = async (req, res) => {
 exports.getPlaceNames = async (req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT DISTINCT dc.clinic_name AS name
-       FROM doctor_clinics dc
-       JOIN doctors d ON d.id = dc.doctor_id
-       WHERE d.status = 'APPROVED'
-       AND dc.clinic_name IS NOT NULL
-       ORDER BY dc.clinic_name`,
+      `SELECT DISTINCT d.doctorName AS name
+FROM doctors d
+INNER JOIN subscriptions s
+ON s.user_id = d.user_id
+WHERE d.status = 'APPROVED'
+AND s.status = 'active'
+AND s.current_period_end >= NOW()
+ORDER BY d.doctorName;`,
     );
 
     return res.status(200).json({
@@ -1068,25 +1292,22 @@ exports.bookVisitAppointment = async (req, res) => {
     );
 
     // ✅ STEP: get doctor user_id
-    const [[doctor]] = await connection.query(
-      `SELECT user_id FROM doctors WHERE id = ?`,
-      [doctorId],
-    );
+  const [[doctor]] = await connection.query(
+  `SELECT d.user_id, u.email
+   FROM doctors d
+   JOIN users u ON d.user_id = u.id
+   WHERE d.id = ?`,
+  [doctorId],
+);
 
-    // ✅ Notification insert for doctor
-    await connection.query(
-      `INSERT INTO notifications
-   (receiver_id, receiver_role, title, message, appointment_id)
-   VALUES (?, 'DOCTOR', ?, ?, ?)`,
-      [
-        doctor.user_id,
-        "New Appointment Request",
-        "You have a new appointment request from patient.",
-        result.insertId,
-      ],
-    );
+await connection.commit();
 
-    await connection.commit();
+eventBus.emit(EVENTS.APPOINTMENT_REQUESTED, {
+  appointmentId: result.insertId,
+  doctorId: doctor.user_id,
+  doctorEmail: doctor.email,
+
+});
 
     res.status(201).json({
       message: "Clinic appointment booked",
@@ -1178,11 +1399,27 @@ exports.cancelAppointment = async (req, res) => {
       });
     }
 
-    eventBus.emit(APPOINTMENT_CANCELLED_BY_PATIENT, {
-      eventType: APPOINTMENT_CANCELLED_BY_PATIENT,
-      appointmentId,
-      patient: { id: userId },
-    });
+    const [[appointment]] = await db.query(
+  `SELECT d.user_id, u.email
+   FROM appointments a
+   JOIN doctors d ON a.doctor_id = d.id
+   JOIN users u ON d.user_id = u.id
+   WHERE a.id = ?`,
+  [appointmentId]
+);
+
+if (!appointment) {
+  return res.status(404).json({
+    success: false,
+    message: "Doctor not found",
+  });
+}
+
+eventBus.emit(EVENTS.APPOINTMENT_CANCELLED_BY_PATIENT, {
+  appointmentId,
+  doctorId: appointment.user_id,
+  doctorEmail: appointment.email,
+});
 
     return res.status(200).json({
       success: true,
@@ -1559,6 +1796,83 @@ exports.qrBookVisit = async (req, res) => {
 };
 // getTokenStatus
 
+// exports.getTokenStatus = async (req, res) => {
+//   const patientId = req.user.id;
+//   const { appointmentId } = req.params;
+
+//   try {
+//     // ✅ FIXED APPOINTMENT QUERY
+//     const [[appointment]] = await db.query(
+//       `SELECT
+//         a.id,
+//         a.doctor_id,
+//         a.token_number,
+//         a.appointment_date,
+//         a.appointment_slot,
+//         a.status,
+//         d.consultation_duration
+//        FROM appointments a
+//        JOIN doctors d ON d.id = a.doctor_id
+//        WHERE a.id = ?
+//        AND (
+//          a.patient_id = ?
+//          OR a.id IN (
+//            SELECT appointment_id
+//            FROM appointment_patients
+//            WHERE patient_id = ?
+//          )
+//        )`,
+//       [appointmentId, patientId, patientId],
+//     );
+
+//     if (!appointment) {
+//       return res.status(404).json({ message: "Appointment not found" });
+//     }
+
+//     // ✅ SLOT BASED IN_PROGRESS
+//     const [[inProgress]] = await db.query(
+//       `SELECT token_number
+//        FROM appointments
+//        WHERE doctor_id = ?
+//        AND appointment_date = ?
+//        AND appointment_slot = ?
+//        AND status = 'IN_PROGRESS'
+//        ORDER BY token_number
+//        LIMIT 1`,
+//       [
+//         appointment.doctor_id,
+//         appointment.appointment_date,
+//         appointment.appointment_slot,
+//       ],
+//     );
+
+//     let nowServing = null;
+//     if (inProgress) {
+//       nowServing = inProgress.token_number;
+//     }
+
+//     // ✅ WAIT TIME
+//     const durationMins = parseInt(appointment.consultation_duration, 10) || 5;
+
+//     const estimatedWaitMinutes =
+//       nowServing !== null
+//         ? Math.max(appointment.token_number - nowServing, 0) * durationMins
+//         : 0;
+
+//     return res.json({
+//       yourToken: appointment.token_number,
+//       nowServing,
+//       status: appointment.status,
+//       estimatedWaitMinutes,
+//     });
+//   } catch (err) {
+//     return res.status(500).json({
+//       message: "Server error",
+//       error: err.message,
+//     });
+//   }
+// };
+
 exports.getTokenStatus = async (req, res) => {
   const patientId = req.user.id;
   const { appointmentId } = req.params;
@@ -1622,11 +1936,20 @@ exports.getTokenStatus = async (req, res) => {
         ? Math.max(appointment.token_number - nowServing, 0) * durationMins
         : 0;
 
+    const patientsAhead =
+      nowServing !== null
+        ? Math.max(appointment.token_number - nowServing, 0)
+        : 0;
+
     return res.json({
       yourToken: appointment.token_number,
       nowServing,
       status: appointment.status,
       estimatedWaitMinutes,
+      appointmentId: appointment.id,
+      token: appointment.token_number,
+      patientsAhead,
+      estimatedTime: `${estimatedWaitMinutes} mins`,
     });
   } catch (err) {
     return res.status(500).json({
@@ -1907,72 +2230,6 @@ exports.deleteFamilyMember = async (req, res) => {
   }
 };
 
-// getPatientNotifications
-
-exports.getPatientNotifications = async (req, res) => {
-  const patientId = req.user.id;
-
-  try {
-    const [notifications] = await db.query(
-      `SELECT id, title, message, appointment_id, is_read, created_at
-       FROM notifications
-       WHERE receiver_id = ?
-       AND receiver_role = 'PATIENT'
-       ORDER BY created_at DESC`,
-      [patientId],
-    );
-
-    res.json({ notifications });
-  } catch (err) {
-    res.status(500).json({ message: "Server error" });
-  }
-};
-
-// markNotificationRead
-
-exports.markNotificationRead = async (req, res) => {
-  const patientId = req.user.id;
-  const { id } = req.params;
-
-  try {
-    const [result] = await db.query(
-      `UPDATE notifications
-       SET is_read = TRUE
-       WHERE id = ?
-       AND receiver_id = ?
-       AND receiver_role = 'PATIENT'
-       AND is_read = FALSE`,
-      [id, patientId],
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        message: "Notification not found or already read",
-      });
-    }
-
-    res.json({ message: "Notification marked as read" });
-  } catch (err) {
-    res.status(500).json({ message: "Server error" });
-  }
-};
-
-//getUnreadNotificationCount
-
-exports.getUnreadNotificationCount = async (req, res) => {
-  const patientId = req.user.id;
-
-  const [[row]] = await db.query(
-    `SELECT COUNT(*) AS count
-     FROM notifications
-     WHERE receiver_id = ?
-     AND receiver_role = 'PATIENT'
-     AND is_read = FALSE`,
-    [patientId],
-  );
-
-  res.json({ unreadCount: row.count });
-};
 
 // Patient submitDoctorReview
 
@@ -2125,6 +2382,82 @@ exports.getPrescription = async (req, res) => {
   }
 };
 
+// // ✅ POST → Create Booking
+// exports.bookhomecareservices = async (req, res) => {
+//   try {
+//     const {
+//       full_name,
+//       patient_age,
+//       patient_gender,
+
+//       patient_latitude,
+//       patient_longitude,
+
+//       gender_preference,
+//       emergency_booking,
+
+//       address,
+//       contact_number,
+
+//       service_type,
+//       medical_condition,
+
+//       duration_type,
+//       number_of_days,
+
+//       preferred_date,
+//       time_slot,
+
+//       notes,
+//     } = req.body;
+
+//     const query = `
+// INSERT INTO homecareservice
+// (
+//   full_name,
+//   patient_latitude,
+//   patient_longitude,
+//   address,
+//   contact_number,
+//   service_type,
+//   medical_condition,
+//   duration_type,
+//   number_of_days,
+//   preferred_date,
+//   time_slot,
+//   notes
+// )
+// VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+// `;
+
+//     const [result] = await db.execute(query, [
+//       full_name,
+//       patient_latitude,
+//       patient_longitude,
+//       address,
+//       contact_number,
+//       service_type,
+//       medical_condition,
+//       duration_type,
+//       number_of_days,
+//       preferred_date,
+//       time_slot,
+//       notes,
+//     ]);
+
+//     res.status(201).json({
+//       success: true,
+//       message: "Booking created successfully",
+//       bookingId: result.insertId,
+//     });
+//   } catch (error) {
+//     res.status(500).json({
+//       success: false,
+//       error: error.message,
+//     });
+//   }
+// };
+
 // ✅ POST → Create Booking
 exports.bookhomecareservices = async (req, res) => {
   try {
@@ -2168,9 +2501,13 @@ INSERT INTO homecareservice
   number_of_days,
   preferred_date,
   time_slot,
-  notes
+  notes,
+  patient_age,
+patient_gender,
+gender_preference,
+emergency_booking
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?)
 `;
 
     const [result] = await db.execute(query, [
@@ -2186,6 +2523,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       preferred_date,
       time_slot,
       notes,
+      patient_age,
+      patient_gender,
+      gender_preference,
+      emergency_booking,
     ]);
 
     res.status(201).json({

@@ -7,48 +7,46 @@
 
 const plans = Object.freeze([
   // MONTHLY
-
-  {
-    id: "plan_trial",
-    name: "45 Days Free Trial",
-    slug: "trial",
-    description:
-      "Experience all premium features free for 45 days with no setup cost.",
-    icon: "🎁",
-    monthlyPrice: 0,
-    yearlyPrice: 0,
-    totalPrice: 0,
-    currency: "INR",
-    recommended: false,
-    category: "monthly",
-    months: 1.5,
-    freeText: "FREE",
-    subtitle: "Try Yo Doctor Free",
-    buttonText: "Start Free Trial",
-    discount: "",
-    gradient: "from-emerald-500 to-green-600",
-    circleColor: "bg-emerald-600",
-    features: [
-      { text: "Unlimited patient records", included: true },
-      { text: "Appointment scheduling", included: true },
-      { text: "Telemedicine integration", included: true },
-      { text: "Analytics dashboard", included: true },
-      { text: "Priority support", included: true },
-    ],
-    //     razorpay: {
-    //     monthly_plan_id: "plan_rzp_trial_monthly",
-    //     yearly_plan_id: "plan_rzp_trial_yearly",
-    // },
-    maxUsers: null,
-    maxPatients: null,
+{
+  id: "plan_trial",
+  name: "45 Days Trial Plan",
+  slug: "trial",
+  description:
+    "Get full Premium access for 45 days with a one-time ₹1 introductory charge. No automatic renewal. Upgrade anytime after your trial ends.",
+  icon: "🎁",
+  originalPrice: 1,
+  monthlyPrice: 1,
+  totalPrice: 1,
+  currency: "INR",
+  recommended: false,
+  category: "monthly",
+  months: 1.5,
+  freeText: "₹1",
+  subtitle: "Premium Trial Access",
+  buttonText: "Start Trial",
+  discount: "",
+  gradient: "from-emerald-500 to-green-600",
+  circleColor: "bg-emerald-600",
+  features: [
+    { text: "Unlimited patient records", included: true },
+    { text: "Appointment scheduling", included: true },
+    { text: "Telemedicine integration", included: true },
+    { text: "Analytics dashboard", included: true },
+    { text: "Priority support", included: true },
+  ],
+  razorpay: {
+    monthly_plan_id: "plan_T6BiGa4YzmKLa7",
   },
+  maxUsers: null,
+  maxPatients: null,
+},
 
   {
     id: "plan_3_month",
     name: "3 Month Plan",
     slug: "3-month",
     description:
-      "Pay for only 45 days and use Yo Doctor for 3 full months.",
+      "Get 1.5 months FREE. Pay for only 1.5 months and enjoy 3 months of Premium access.",
     icon: "🏥",
     category: "monthly",
     months: 3,
@@ -71,7 +69,7 @@ const plans = Object.freeze([
       { text: "Priority support", included: true },
     ],
     razorpay: {
-      monthly_plan_id: "plan_SyIGKoWJWSbIwh",
+      monthly_plan_id: "plan_T6BlGdsOh4ELbW",
       // yearly_plan_id: "plan_SyIGKoWJWSbIwh",
     },
     maxUsers: null,
@@ -83,7 +81,7 @@ const plans = Object.freeze([
     name: "6 Month Plan",
     slug: "6-month",
     description:
-      "Pay for only 3 months and get additional 3 months absolutely free.",
+      "Get 3 months FREE. Pay for only 3 months and enjoy 6 months of YoDoctor Premium access.",
     icon: "⚕️",
     category: "monthly",
     months: 6,
@@ -106,7 +104,7 @@ const plans = Object.freeze([
       { text: "Priority support", included: true },
     ],
     razorpay: {
-      monthly_plan_id: "plan_SyIJ1YDRxCEv4x",
+      monthly_plan_id: "plan_T6BmA9Jd2Pp9N9",
       // yearly_plan_id: "plan_rzp_6_month_yearly",
     },
     maxUsers: null,
@@ -120,7 +118,7 @@ const plans = Object.freeze([
     name: "1 Year Plan",
     slug: "1-year",
     description:
-      "Pay for only 8 months and get 4 months absolutely free.",
+      "Get 4 months FREE. Pay for only 8 months and enjoy 12 months of YoDoctor Premium access.",
     icon: "🏨",
     category: "yearly",
     months: 12,
@@ -144,7 +142,7 @@ const plans = Object.freeze([
     ],
     razorpay: {
       // monthly_plan_id: "plan_rzp_1_year_monthly",
-      yearly_plan_id: "plan_SyIP4sWbpbeDfA",
+      yearly_plan_id: "plan_T6Bnhpp5eOIz5f",
     },
     maxUsers: null,
     maxPatients: null,
@@ -178,7 +176,7 @@ const plans = Object.freeze([
     ],
     razorpay: {
       // monthly_plan_id: "plan_rzp_2_year_monthly",
-      yearly_plan_id: "plan_SyIMaGNKF8EbwI",
+      yearly_plan_id: "plan_T6BoglchsAYo6g",
     },
     maxUsers: null,
     maxPatients: null,
@@ -212,7 +210,7 @@ const plans = Object.freeze([
     ],
         razorpay: {
         // monthly_plan_id: "plan_SyIGKoWJWSbIwh",
-        yearly_plan_id: "plan_SyINA6gLxiaiEu",
+        yearly_plan_id: "plan_T6BpNvDw35UGSf",
     },  
     maxUsers: null,
     maxPatients: null,
