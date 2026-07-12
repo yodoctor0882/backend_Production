@@ -2,15 +2,25 @@ const jwt = require("jsonwebtoken");
 
 const socketAuth = (socket, next) => {
   try {
-    const token =
-      socket.handshake.auth?.token ||
-      socket.handshake.headers?.authorization?.replace("Bearer ", "");
+    const authToken = socket.handshake.auth?.token;
+
+    const authorizationHeader = socket.handshake.headers?.authorization;
+
+    const bearerToken = authorizationHeader?.startsWith("Bearer ")
+      ? authorizationHeader.slice(7)
+      : null;
+
+    const token = authToken || bearerToken;
 
     if (!token) {
       return next(new Error("Authentication required"));
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    if (!decoded.id || !decoded.role) {
+      return next(new Error("Invalid token payload"));
+    }
 
     socket.user = {
       id: decoded.id,

@@ -4,72 +4,73 @@ const cron = require("node-cron");
 const db = require("../src/config/db");
 
 const expireCertificatesJob = () => {
+  cron.schedule("0 0 * * *", async () => {
+    console.log("[CRON] Running certificate expiry job...");
 
-  // 🔁 Common DB helper
-  const runQuery = (query, callback) => {
-    db.query(query, (err, results) => {
-      if (err) {
-        console.error("Cron DB Error:", err);
+    try {
+      const [rows] = await db.query(`
+        SELECT id, certificate_id, user_id, email
+        FROM certificate_requests
+        WHERE expiry_date < NOW()
+        AND status = 'Approved'
+      `);
+
+      if (rows.length === 0) {
+        console.log("[CRON] No certificates found for expiry.");
         return;
       }
-      callback(results);
-    });
-  };
 
-  // 🔁 Common event emitter
-  const emitEvent = (eventType, row) => {
-    eventBus.emit(eventType, {
-      patientId: row.user_id,
-      patientEmail: row.email,
-      certificateId: row.certificate_id,
-    });
-  };
+      const ids = rows.map((row) => row.id);
 
-  // ✅ 1. EXPIRE CERTIFICATES
-  cron.schedule("0 0 * * *", () => {
-    console.log("Running Expiry Job...");
+      const placeholders = ids.map(() => "?").join(",");
 
-    const query = `
-      SELECT id, certificate_id, user_id, email
-      FROM certificate_requests
-      WHERE expiry_date < NOW()
-      AND status = 'Approved'
-    `;
+      await db.query(
+        `
+        UPDATE certificate_requests
+        SET status = 'Expired'
+        WHERE id IN (${placeholders})
+        `,
+        ids
+      );
 
-    runQuery(query, (results) => {
-      results.forEach((row) => {
-        db.query(
-          `UPDATE certificate_requests SET status='Expired' WHERE id=?`,
-          [row.id]
-        );
+      for (const row of rows) {
+        eventBus.emit(EVENTS.CERTIFICATE_EXPIRED, {
+          patientId: row.user_id,
+          patientEmail: row.email,
+          certificateId: row.certificate_id,
+        });
+      }
 
-        emitEvent(EVENTS.CERTIFICATE_EXPIRED, row);
-      });
-
-      console.log("Expire job done:", results.length);
-    });
+      console.log(`[CRON] Expire job done: ${rows.length}`);
+    } catch (error) {
+      console.error("[CRON] Certificate expiry job failed:", error);
+    }
   });
 
-  // ✅ 2. EXPIRY REMINDER
-  cron.schedule("0 9 * * *", () => {
-    console.log("Running Reminder Job...");
+  cron.schedule("0 9 * * *", async () => {
+    console.log("[CRON] Running certificate reminder job...");
 
-    const query = `
-      SELECT id, certificate_id, user_id, email
-      FROM certificate_requests
-      WHERE DATE(expiry_date) = DATE_ADD(CURDATE(), INTERVAL 2 DAY)
-      AND status = 'Approved'
-    `;
+    try {
+      const [rows] = await db.query(`
+        SELECT id, certificate_id, user_id, email
+        FROM certificate_requests
+        WHERE DATE(expiry_date) = DATE_ADD(CURDATE(), INTERVAL 2 DAY)
+        AND status = 'Approved'
+      `);
 
-    runQuery(query, (results) => {
-      results.forEach((row) => {
-        emitEvent(EVENTS.CERTIFICATE_EXPIRY_REMINDER, row);
-      });
+      for (const row of rows) {
+        eventBus.emit(EVENTS.CERTIFICATE_EXPIRY_REMINDER, {
+          patientId: row.user_id,
+          patientEmail: row.email,
+          certificateId: row.certificate_id,
+        });
+      }
 
-      console.log("Reminder job done:", results.length);
-    });
+      console.log(`[CRON] Reminder job done: ${rows.length}`);
+    } catch (error) {
+      console.error("[CRON] Certificate reminder job failed:", error);
+    }
   });
-
 };
 
 module.exports = expireCertificatesJob;
