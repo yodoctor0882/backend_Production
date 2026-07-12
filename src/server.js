@@ -1,8 +1,9 @@
-
-const app = require("./app");
 require("dotenv").config();
 
+const app = require("./app");
+
 const syncPlans = require("./utils/syncPlans");
+
 const PORT = process.env.PORT || 4000;
 
 (async () => {

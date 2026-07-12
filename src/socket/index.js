@@ -3,16 +3,24 @@ const { Server } = require("socket.io");
 let io = null;
 
 const initializeSocket = (httpServer) => {
+  if (io) {
+    return io;
+  }
+
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean)
+    : [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://yodoctor.in",
+        "https://www.yodoctor.in",
+      ];
+
   io = new Server(httpServer, {
     cors: {
-      origin: process.env.ALLOWED_ORIGINS
-        ? process.env.ALLOWED_ORIGINS.split(",")
-        : [
-            "http://localhost:3000",
-            "http://localhost:3001",
-            "https://yodoctor.in",
-            "https://www.yodoctor.in",
-          ],
+      origin: allowedOrigins,
       credentials: true,
       methods: ["GET", "POST"],
     },
@@ -27,6 +35,8 @@ const initializeSocket = (httpServer) => {
       skipMiddlewares: true,
     },
   });
+
+  console.log("✅ Socket.IO server initialized");
 
   return io;
 };
