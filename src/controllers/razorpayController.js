@@ -202,8 +202,7 @@ const getPlanById = (req, res) => {
 
 // --------------------------- subscriptionsController --------------------------
 
-const findPlan = (planId) =>
-  plans.find((p) => p.id === planId || p.slug === planId);
+const findPlan = (planId) =>plans.find((p) => p.id === planId || p.slug === planId);
 
 const getPlanDurationMonths = (planId) => {
   const plan = plans.find((p) => p.id === planId);
@@ -301,62 +300,7 @@ const createSubscription = async (req, res) => {
       }
     }
 
-    // ================= FREE TRIAL =================
-
-    // if (plan.id === "plan_trial") {
-    //   const localSubId = `sub_${uuidv4().replace(/-/g, "").slice(0, 12)}`;
-
-    //   const now = new Date();
-
-    //   const expiry = new Date();
-    //   expiry.setDate(expiry.getDate() + 45);
-
-    //   await db.execute(
-    //     `
-    //     INSERT INTO subscriptions(
-    //       id,
-    //       user_id,
-    //       plan_id,
-    //       plan_name,
-    //       status,
-    //       billing_cycle,
-    //       amount,
-    //       currency,
-    //       rzp_subscription_id,
-    //       start_date,
-    //       current_period_start,
-    //       current_period_end,
-    //       next_billing_date
-    //     )
-    //     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-    //     `,
-    //     [
-    //       localSubId,
-    //       req.user.id,
-    //       plan.id,
-    //       plan.name,
-    //       "active",
-    //       "monthly",
-    //       0,
-    //       "INR",
-    //       null,
-    //       now,
-    //       now,
-    //       expiry,
-    //       expiry,
-    //     ],
-    //   );
-
-    //   return created(
-    //     res,
-    //     {
-    //       trial: true,
-    //       local_subscription_id: localSubId,
-    //     },
-    //     "45 Days Trial Activated",
-    //   );
-    // }
-
+    
     // ================= PLAN CONFIG =================
 
     const isYearly = billing === "yearly";

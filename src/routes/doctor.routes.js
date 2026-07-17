@@ -7,6 +7,8 @@ const { requireActiveUser } = require("../middleware/activeUser");
 const upload = require("../middleware/upload.middleware");
 const uploadDoctorDocs = require("../middleware/uploadDoctorDocs");
 
+const { apiLimiter } = require("../middleware/rateLimit");
+
 // ─────────────────────────────────────────
 // Dashboard
 // ─────────────────────────────────────────
@@ -27,7 +29,7 @@ router.get(
   doctorController.getDoctorProfile,
 );
 
-// ✅ ADDED: PUT /doctor/profile — was missing, frontend useDoctorProfile hook calls this
+
 router.put(
   "/profile",
   verifyToken,
@@ -97,13 +99,6 @@ router.put(
 
 
 
-
-// ─────────────────────────────────────────
-// Appointments
-// ✅ FIX: Specific routes PEHLE, :id wala BAAD MEIN
-// ─────────────────────────────────────────
-
-// ✅ Specific GET routes — pehle
 router.get(
   "/appointments/incoming",
   verifyToken,
@@ -142,49 +137,49 @@ router.get(
 );
 
 router.get(
-  "/appointments/carry-forward", // ✅ specific — pehle
+  "/appointments/carry-forward", 
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.getCarryForwardAppointments,
 );
 
-// ✅ Specific PUT routes — pehle
+
 router.put(
-  "/appointments/auto-accept", // ✅ specific — pehle
+  "/appointments/auto-accept", 
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.autoAcceptAllAppointments,
 );
 
 router.put(
-  "/appointments/noShow", // ✅ specific — pehle
+  "/appointments/noShow", 
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.markNoShow,
 );
 
 router.put(
-  "/appointments/carry-forward", // ✅ specific — pehle
+  "/appointments/carry-forward", 
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.carryForwardRemaining,
 );
 
 router.put(
-  "/appointments/cancel-remaining", // ✅ specific — pehle
+  "/appointments/cancel-remaining", 
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.cancelRemainingAppointments,
 );
 
 router.put(
-  "/appointments/recall/:id", // ✅ specific pattern — pehle
+  "/appointments/recall/:id", 
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.recallSkippedPatient,
 );
 
-// ✅ POST specific — pehle
+
 router.post(
   "/appointments/next-token",
   verifyToken,
@@ -193,30 +188,29 @@ router.post(
   doctorController.callNextToken,
 );
 
-// ✅ Dynamic :id routes — BAAD MEIN
 router.put(
-  "/appointments/:id/start", // ✅ dynamic — baad mein
+  "/appointments/:id/start", 
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.startAppointment,
 );
 
 router.put(
-  "/appointments/:id/skip", // ✅ dynamic — baad mein
+  "/appointments/:id/skip",
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.skipAppointment,
 );
 
 router.post(
-  "/appointments/:id/summary", // ✅ dynamic — baad mein
+  "/appointments/:id/summary", 
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.addVisitSummary,
 );
 
 router.post(
-  "/appointments/:id/prescription", // ✅ dynamic — baad mein
+  "/appointments/:id/prescription", 
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.addPrescription,
@@ -292,4 +286,15 @@ router.post(
 );
 
 router.get("/alldoctors", doctorController.getAllDoctors);
+
+// doctor check own status
+
+router.get(
+  "/verification-status",
+  apiLimiter,
+  verifyToken,
+  allowRoles("DOCTOR"),
+  doctorController.getDoctorVerificationStatus,
+);
+
 module.exports = router;

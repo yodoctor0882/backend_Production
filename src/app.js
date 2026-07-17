@@ -1,30 +1,65 @@
+// const express = require("express");
+// const app = express();
+
+// app.set("trust proxy", 1);
+
+// app.disable("x-powered-by");
+// require("dotenv").config();
+// const requiredEnv = [
+//   "RAZORPAY_KEY_ID",
+//   "RAZORPAY_KEY_SECRET",
+//   "RAZORPAY_WEBHOOK_SECRET",
+//   "JWT_SECRET",
+// ];
+// requiredEnv.forEach((key) => {
+//   if (!process.env[key]) {
+//     throw new Error(`${key} is missing in .env`);
+//   }
+// });
+// const cors = require("cors");
+
+// const path = require("path");
+
+// const helmet = require("helmet");
+// const morgan = require("morgan");
+// const rateLimit = require("express-rate-limit");
+
+// app.use(helmet());
+
+require("dotenv").config();
+
 const express = require("express");
+const cors = require("cors");
+const path = require("path");
+const helmet = require("helmet");
+const morgan = require("morgan");
+const rateLimit = require("express-rate-limit");
+const {
+  authLimiter,
+  paymentLimiter,
+} = require("./middleware/rateLimit");
+
 const app = express();
 
 app.set("trust proxy", 1);
-
 app.disable("x-powered-by");
-require("dotenv").config();
+
 const requiredEnv = [
   "RAZORPAY_KEY_ID",
   "RAZORPAY_KEY_SECRET",
   "RAZORPAY_WEBHOOK_SECRET",
   "JWT_SECRET",
 ];
+
 requiredEnv.forEach((key) => {
   if (!process.env[key]) {
     throw new Error(`${key} is missing in .env`);
   }
 });
-const cors = require("cors");
-
-const path = require("path");
-
-const helmet = require("helmet");
-const morgan = require("morgan");
-const rateLimit = require("express-rate-limit");
-
+app.use("/auth", authLimiter);
+app.use("/razorpay", paymentLimiter);
 app.use(helmet());
+
 
 const expireCertificatesJob = require("../cron/expireCertificates");
 const EVENTS = require("./events/notification.events");

@@ -25,3 +25,8 @@ src/config/config.js
 # Build output
 dist/
 build/
+
+# Firebase / Google service account credentials
+src/config/serviceAccountKey.json
+serviceAccountKey.json
+*serviceAccountKey*.json

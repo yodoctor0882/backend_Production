@@ -904,69 +904,6 @@ exports.respondAppointment = async (req, res) => {
   }
 };
 
-// exports.getDashboard = async (req, res) => {
-//   const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
-//     req.user.id,
-//   ]);
-
-//   if (!doc) {
-//     return res.status(404).json({ message: "Doctor not found" });
-//   }
-
-//   const doctorId = doc.id;
-
-//   try {
-//     // doctor name
-//     const [[doctor]] = await db.query(
-//       `SELECT doctorName FROM doctors WHERE user_id = ?`,
-//       [req.user.id],
-//     );
-
-//     if (!doctor) {
-//       return res.status(404).json({ message: "Doctor not found" });
-//     }
-
-//     // dashboard stats
-//     const [stats] = await db.query(
-//       `SELECT
-//   COUNT(CASE WHEN status='PENDING' THEN 1 END) AS pendingRequests,
-
-//   COUNT(CASE
-//         WHEN appointment_date = CURDATE()
-//         AND status IN ('ACCEPTED','IN_PROGRESS')
-//        THEN 1 END) AS todayQueue,
-
-//   COUNT(CASE
-//         WHEN appointment_date = DATE_ADD(CURDATE(), INTERVAL 1 DAY)
-//        THEN 1 END) AS tomorrow,
-
-//   COUNT(CASE
-//         WHEN appointment_date = DATE_ADD(CURDATE(), INTERVAL 2 DAY)
-//        THEN 1 END) AS nextDay,
-
-//   COUNT(CASE
-//         WHEN status='COMPLETED'
-//         AND appointment_date = CURDATE()
-//        THEN 1 END) AS completedToday,
-
-//     COUNT(
-//     DISTINCT COALESCE(patient_id, family_member_id, CONCAT('W', id))
-//   ) AS totalPatients
-
-// FROM appointments
-// WHERE doctor_id = ?`,
-//       [doctorId],
-//     );
-
-//     res.json({
-//       ...stats[0],
-//       doctorName: doctor?.doctorName || "",
-//     });
-//   } catch (err) {
-//     console.error("Dashboard error:", err);
-//     res.status(500).json({ message: "Server error" });
-//   }
-// };
 
 exports.getDashboard = async (req, res) => {
   const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
@@ -2046,37 +1983,6 @@ exports.getMyQRRedirect = async (req, res) => {
   }
 };
 
-// DOCTOR – getMyQR
-
-// exports.getMyQR = async (req, res) => {
-//   // const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
-//   const frontendUrl = process.env.FRONTEND_URL
-//     ? process.env.FRONTEND_URL.split(",")[0].trim()
-//     : "https://yodoctor.in";
-
-//   const userId = req.user.id;
-
-//   // ✅ FIX: get doctor.id
-//   const [[doctor]] = await db.query(
-//     `SELECT id
-//      FROM doctors
-//      WHERE user_id = ?
-//      AND status = 'APPROVED'`,
-//     [userId],
-//   );
-
-//   if (!doctor) {
-//     return res.status(403).json({
-//       message: "Doctor not approved",
-//     });
-//   }
-
-//   const doctorId = doctor.id;
-
-//   const qrUrl = `${frontendUrl}/qr-redirect?doctorId=${doctorId}`;
-
-//   res.json({ doctorId, qrUrl });
-// };
 
 // DOCTOR – getMyQR
 
@@ -3260,40 +3166,6 @@ exports.getDoctorProfile = async (req, res) => {
   }
 };
 
-// exports.getAllDoctors = async (req, res) => {
-//   try {
-//     const [doctors] = await db.query(`
-//   SELECT
-//     d.id AS _id,
-//     d.doctorName,
-//     d.specialization,
-//     d.experience_years,
-//     d.rating,
-//     dd.file_path AS profile_image
-//   FROM doctors d
-//   LEFT JOIN doctor_documents dd
-//     ON dd.doctor_id = d.id
-//     AND dd.doc_type = 'profile'
-//   WHERE d.status = 'APPROVED'
-//   ORDER BY d.rating DESC
-//   LIMIT 5
-// `);
-
-//     return res.status(200).json({
-//       success: true,
-//       doctors,
-//     });
-//   } catch (err) {
-//     console.log(err);
-
-//     return res.status(500).json({
-//       success: false,
-//       message: "Server error",
-//       error: err.message,
-//     });
-//   }
-// };
-
 exports.getAllDoctors = async (req, res) => {
   try {
     const [doctors] = await db.query(`
@@ -3324,6 +3196,95 @@ exports.getAllDoctors = async (req, res) => {
       success: false,
       message: "Server error",
       error: err.message,
+    });
+  }
+};
+
+exports.getDoctorVerificationStatus = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const role = req.user?.role?.trim().toUpperCase();
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized. User ID not found.",
+      });
+    }
+
+    if (role !== "DOCTOR") {
+      return res.status(403).json({
+        success: false,
+        message: "Only doctors can check doctor verification status.",
+      });
+    }
+
+    
+    const [[doctor]] = await db.query(
+      `SELECT
+        d.id AS doctorId,
+        d.user_id AS userId,
+        d.doctorName,
+        d.status,
+        d.rejection_reason,
+        d.created_at,
+        d.updated_at
+       FROM doctors d
+       WHERE d.user_id = ?
+       LIMIT 1`,
+      [userId],
+    );
+
+    if (!doctor) {
+      return res.status(404).json({
+        success: false,
+        message: "Doctor account not found.",
+      });
+    }
+
+    const status = doctor.status?.trim().toUpperCase() || "PENDING";
+
+    let message;
+
+    switch (status) {
+      case "APPROVED":
+        message = "Your doctor account has been approved.";
+        break;
+
+      case "REJECTED":
+        message = "Your doctor verification has been rejected.";
+        break;
+
+      case "PENDING":
+        message = "Your doctor verification is still pending.";
+        break;
+
+      default:
+        message = "Your doctor verification status is unavailable.";
+        break;
+    }
+
+    return res.status(200).json({
+      success: true,
+      message,
+      doctor: {
+        doctorId: doctor.doctorId,
+        doctorName: doctor.doctorName,
+        status,
+        rejectionReason:
+          status === "REJECTED"
+            ? doctor.rejection_reason || "No rejection reason provided."
+            : null,
+        registeredAt: doctor.created_at,
+        reviewedAt: doctor.updated_at,
+      },
+    });
+  } catch (error) {
+    console.error("[GET DOCTOR VERIFICATION STATUS ERROR]", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to check doctor verification status.",
     });
   }
 };
