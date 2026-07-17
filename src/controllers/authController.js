@@ -4,6 +4,8 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { getAuth } = require("firebase-admin/auth");
+require("../config/firebaseAdmin");
 require("dotenv").config();
 
 const { DeleteObjectCommand } = require("@aws-sdk/client-s3");
@@ -37,6 +39,7 @@ const deleteFileIfExists = async (filePath) => {
 };
 
 // common login api for doctor and patients
+
 exports.login = async (req, res) => {
   const { identifier, password, portal } = req.body;
 
@@ -430,7 +433,6 @@ exports.uploadProfileImage = async (req, res) => {
       });
     }
 
-    // ❌ DO NOT delete local file (no local anymore)
 
     // update DB
     await db.query("UPDATE users SET profile_image = ? WHERE id = ?", [
@@ -524,5 +526,170 @@ exports.deleteProfileImage = async (req, res) => {
       message: "Server error",
       error: err.message,
     });
+  }
+};
+
+
+exports.googleLogin = async (req, res) => {
+  const connection = await db.getConnection();
+
+  try {
+    const { token, portal } = req.body;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: "Firebase token is required",
+      });
+    }
+
+    // Verify Firebase Token
+    const decodedToken = await getAuth().verifyIdToken(token);
+    const email = decodedToken.email;
+    const fullName = decodedToken.name || "";
+    const picture = decodedToken.picture || "";
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Google account does not contain email",
+      });
+    }
+
+    await connection.beginTransaction();
+
+    const [users] = await connection.query(
+      `SELECT * FROM users WHERE email = ?`,
+      [email],
+    );
+
+    let user;
+
+    if (users.length > 0) {
+      user = users[0];
+
+      // Doctor should login from doctor portal
+      if (portal === "USER" && user.role?.trim().toUpperCase() === "DOCTOR") {
+        await connection.rollback();
+
+        return res.status(403).json({
+          success: false,
+          message: "Please use doctor login page",
+        });
+      }
+
+      if (user.is_active === 0) {
+        await connection.rollback();
+
+        return res.status(403).json({
+          success: false,
+          message: "Account inactive",
+        });
+      }
+
+      await connection.query(
+        `UPDATE users
+         SET last_login_at = NOW()
+         WHERE id = ?`,
+        [user.id],
+      );
+
+      // Check patient profile exists
+      if (user.role === "PATIENT") {
+        const [patient] = await connection.query(
+          `SELECT id
+           FROM patients
+           WHERE user_id = ?`,
+          [user.id],
+        );
+
+        if (patient.length === 0) {
+          await connection.query(
+            `INSERT INTO patients
+            (
+              user_id,
+              fullName,
+              email
+            )
+            VALUES (?, ?, ?)`,
+            [user.id, fullName, email],
+          );
+        }
+      }
+    } else {
+      // First Google Login
+
+      const randomPassword = crypto.randomBytes(32).toString("hex");
+
+      const hashedPassword = await bcrypt.hash(randomPassword, 12);
+
+      const [result] = await connection.query(
+        `INSERT INTO users
+        (
+          email,
+          password,
+          role,
+          is_verified,
+          is_active,
+          status,
+          profile_image,
+          last_login_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [email, hashedPassword, "PATIENT", 1, 1, "ACTIVE", picture],
+      );
+
+      user = {
+        id: result.insertId,
+        email,
+        role: "PATIENT",
+      };
+
+      // Create Patient Profile
+      await connection.query(
+        `INSERT INTO patients
+        (
+          user_id,
+          fullName,
+          email
+        )
+        VALUES (?, ?, ?)`,
+        [user.id, fullName, email],
+      );
+    }
+
+    await connection.commit();
+
+    const jwtToken = jwt.sign(
+      {
+        id: user.id,
+        role: user.role,
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: process.env.JWT_EXPIRES_IN || "1d",
+      },
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Google Login Successful",
+      redirect: "dashboard",
+      data: {
+        token: jwtToken,
+      },
+    });
+  } catch (err) {
+    await connection.rollback();
+
+    console.error("GOOGLE LOGIN ERROR:", err);
+
+    return res.status(401).json({
+      success: false,
+      message: "Google Login Failed",
+      error: err.message,
+    });
+  } finally {
+    connection.release();
   }
 };

@@ -104,12 +104,16 @@ exports.handleAppointmentRequested = async (data) => {
 // ✅ Appointment Confirmed
 exports.handleAppointmentConfirmed = async (data) => {
   try {
-    console.log("Appointment confirmed", data);
+    console.log("[Notification] Appointment confirmed:", data);
 
-    const patientData = notifications.APPOINTMENT_CONFIRMED.patient;
-    const doctorData = notifications.APPOINTMENT_CONFIRMED.doctor;
+    const patientData =
+      notifications.APPOINTMENT_CONFIRMED.patient;
 
-    // Patient
+    const doctorData =
+      notifications.APPOINTMENT_CONFIRMED.doctor;
+
+    // ---------------- Patient notification ----------------
+
     await createAppNotification({
       userId: data.patientId,
       role: "patient",
@@ -129,13 +133,21 @@ exports.handleAppointmentConfirmed = async (data) => {
       },
     });
 
-    sendEmail({
-      to: data.patientEmail,
-      subject: patientData.title,
-      html: `<p>${patientData.icon} ${patientData.message}</p>`,
-    }).catch((err) => console.error("[EMAIL ERROR]", err));
+    if (data.patientEmail) {
+      sendEmail({
+        to: data.patientEmail,
+        subject: patientData.title,
+        html: `<p>${patientData.icon || ""} ${patientData.message}</p>`,
+      }).catch((error) => {
+        console.error(
+          "[EMAIL ERROR][PATIENT]",
+          error.message,
+        );
+      });
+    }
 
-    // Doctor
+    // ---------------- Doctor notification ----------------
+
     await createAppNotification({
       userId: data.doctorId,
       role: "doctor",
@@ -155,13 +167,27 @@ exports.handleAppointmentConfirmed = async (data) => {
       },
     });
 
-    sendEmail({
-      to: data.doctorEmail,
-      subject: doctorData.title,
-      html: `<p>${doctorData.icon} ${doctorData.message}</p>`,
-    }).catch((err) => console.error("[EMAIL ERROR]", err));
-  } catch (err) {
-    console.error("Error:", err);
+    if (data.doctorEmail) {
+      sendEmail({
+        to: data.doctorEmail,
+        subject: doctorData.title,
+        html: `<p>${doctorData.icon || ""} ${doctorData.message}</p>`,
+      }).catch((error) => {
+        console.error(
+          "[EMAIL ERROR][DOCTOR]",
+          error.message,
+        );
+      });
+    }
+
+    console.log(
+      `[Notification] Appointment ${data.appointmentId} notifications completed`,
+    );
+  } catch (error) {
+    console.error(
+      "[Notification Handler][Appointment Confirmed]",
+      error,
+    );
   }
 };
 

@@ -38,6 +38,6 @@ router.delete(
   authController.deleteProfileImage
 );
 
-
+router.post("/google-login", authController.googleLogin);
 
 module.exports = router;

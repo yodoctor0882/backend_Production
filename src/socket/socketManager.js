@@ -93,8 +93,6 @@
 //     }
 //   }
 
-  
-
 //   /**
 //    * Broadcast to all connected users
 //    */
@@ -111,75 +109,83 @@
 
 // module.exports = new SocketManager();
 
-
-const { getIO } = require("./index");
-
-class SocketManager {
-  emitToRoom(room, event, payload) {
-    try {
-      const io = getIO();
-
-      io.to(room).emit(event, payload);
-
-      return true;
-    } catch (error) {
-      console.error(
-        `[SocketManager][${room}][${event}]`,
-        error.message
-      );
-
-      return false;
-    }
+const toUser = (userId, eventName, payload) => {
+  if (!userId) {
+    console.error("[SocketManager][toUser] userId is required");
+    return false;
   }
 
-  toUser(userId, event, payload) {
-    return this.emitToRoom(`user:${userId}`, event, payload);
+  if (!eventName) {
+    console.error("[SocketManager][toUser] eventName is required");
+    return false;
   }
 
-  toDoctor(doctorId, event, payload) {
-    return this.emitToRoom(`doctor:${doctorId}`, event, payload);
+  try {
+    /*
+     * Require getIO only when the function executes.
+     * Do not call getIO at module-import time.
+     */
+    const { getIO } = require("./index");
+
+    const io = getIO();
+    const roomName = `user:${userId}`;
+
+    io.to(roomName).emit(eventName, payload);
+
+    console.log(
+      `[SocketManager][toUser] Event "${eventName}" emitted to ${roomName}`,
+    );
+
+    return true;
+  } catch (error) {
+    console.error(`[SocketManager][toUser] ${error.message}`);
+
+    return false;
+  }
+};
+
+const toRoom = (roomName, eventName, payload) => {
+  if (!roomName || !eventName) {
+    return false;
   }
 
-  toPatient(patientId, event, payload) {
-    return this.emitToRoom(`patient:${patientId}`, event, payload);
+  try {
+    const { getIO } = require("./index");
+
+    const io = getIO();
+
+    io.to(roomName).emit(eventName, payload);
+
+    return true;
+  } catch (error) {
+    console.error(`[SocketManager][toRoom] ${error.message}`);
+
+    return false;
+  }
+};
+
+const broadcast = (eventName, payload) => {
+  if (!eventName) {
+    return false;
   }
 
-  toAdmins(event, payload) {
-    return this.emitToRoom("admins", event, payload);
+  try {
+    const { getIO } = require("./index");
+
+    const io = getIO();
+
+    io.emit(eventName, payload);
+
+    return true;
+  } catch (error) {
+    console.error(`[SocketManager][broadcast] ${error.message}`);
+
+    return false;
   }
+};
 
-  toRole(role, event, payload) {
-    return this.emitToRoom(`role:${role}`, event, payload);
-  }
-
-  toRoom(room, event, payload) {
-    return this.emitToRoom(room, event, payload);
-  }
-
-  toClinic(clinicId, event, payload) {
-    return this.emitToRoom(`clinic:${clinicId}`, event, payload);
-  }
-
-  toQueue(doctorId, event, payload) {
-    return this.emitToRoom(`queue:${doctorId}`, event, payload);
-  }
-
-  broadcast(event, payload) {
-    try {
-      const io = getIO();
-
-      io.emit(event, payload);
-
-      return true;
-    } catch (error) {
-      console.error(
-        `[SocketManager][broadcast][${event}]`,
-        error.message
-      );
-
-      return false;
-    }
-  }
-}
-
-module.exports = new SocketManager();
+module.exports = {
+  toUser,
+  toRoom,
+  broadcast,
+};

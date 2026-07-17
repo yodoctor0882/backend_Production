@@ -1,73 +1,90 @@
-const EVENTS = require("../events/notification.events");
-const eventBus = require("../events/eventBus");
-const events = require("../events/notification.events");
+const eventBus = require("./eventBus");
+const EVENTS = require("./notification.events");
+
 const handlers = require("../notifications/notification.handler");
 const certHandler = require("../notifications/certificate.handler");
 
+let eventsRegistered = false;
+
 const registerEvents = () => {
+  if (eventsRegistered) {
+    console.warn("[Events] Event listeners are already registered");
+    return;
+  }
+
+  eventsRegistered = true;
+
+  // Doctor registration
+  eventBus.on(EVENTS.DOCTOR_REGISTERED, handlers.handleDoctorRegistered);
 
   eventBus.on(
-  events.DOCTOR_REGISTERED,
-  handlers.handleDoctorRegistered,
-);
-eventBus.on(
-  events.DOCTOR_REGISTRATION_SUBMITTED,
-  handlers.handleDoctorRegistrationSubmitted,
-);
+    EVENTS.DOCTOR_REGISTRATION_SUBMITTED,
+    handlers.handleDoctorRegistrationSubmitted,
+  );
+
   // Appointment lifecycle
   eventBus.on(
-    events.APPOINTMENT_REQUESTED,
+    EVENTS.APPOINTMENT_REQUESTED,
     handlers.handleAppointmentRequested,
   );
+
   eventBus.on(
-    events.APPOINTMENT_CONFIRMED,
+    EVENTS.APPOINTMENT_CONFIRMED,
     handlers.handleAppointmentConfirmed,
   );
-  eventBus.on(events.APPOINTMENT_REJECTED, handlers.handleAppointmentRejected);
+
+  eventBus.on(EVENTS.APPOINTMENT_REJECTED, handlers.handleAppointmentRejected);
+
   eventBus.on(
-    events.APPOINTMENT_CANCELLED_BY_PATIENT,
+    EVENTS.APPOINTMENT_CANCELLED_BY_PATIENT,
     handlers.handleAppointmentCancelledByPatient,
   );
+
   eventBus.on(
-    events.APPOINTMENT_CANCELLED_BY_ADMIN,
+    EVENTS.APPOINTMENT_CANCELLED_BY_ADMIN,
     handlers.handleAppointmentCancelledByAdmin,
   );
+
   eventBus.on(
-    events.APPOINTMENT_CANCELLED_BY_DOCTOR,
+    EVENTS.APPOINTMENT_CANCELLED_BY_DOCTOR,
     handlers.handleAppointmentCancelledByDoctor,
   );
 
   eventBus.on(
-    events.APPOINTMENT_COMPLETED,
+    EVENTS.APPOINTMENT_COMPLETED,
     handlers.handleAppointmentCompleted,
   );
 
-  // Reminders
-  eventBus.on(events.APPOINTMENT_REMINDER, handlers.handleAppointmentReminder);
+  // Appointment reminder
+  eventBus.on(EVENTS.APPOINTMENT_REMINDER, handlers.handleAppointmentReminder);
 
   // Doctor onboarding
-  eventBus.on(events.DOCTOR_APPROVED, handlers.handleDoctorApproved);
-  eventBus.on(events.DOCTOR_REJECTED, handlers.handleDoctorRejected);
+  eventBus.on(EVENTS.DOCTOR_APPROVED, handlers.handleDoctorApproved);
+
+  eventBus.on(EVENTS.DOCTOR_REJECTED, handlers.handleDoctorRejected);
 
   // Visit summary
-  eventBus.on(events.VISIT_SUMMARY_ADDED, handlers.handleVisitSummaryAdded);
+  eventBus.on(EVENTS.VISIT_SUMMARY_ADDED, handlers.handleVisitSummaryAdded);
 
-  // Visit summary
-
+  // Certificate lifecycle
   eventBus.on(
     EVENTS.CERTIFICATE_APPROVED,
     certHandler.handleCertificateApproved,
   );
+
   eventBus.on(
     EVENTS.CERTIFICATE_REJECTED,
     certHandler.handleCertificateRejected,
   );
+
   eventBus.on(EVENTS.CERTIFICATE_EXPIRED, certHandler.handleCertificateExpired);
+
   eventBus.on(
     EVENTS.CERTIFICATE_EXPIRY_REMINDER,
     certHandler.handleExpiryReminder,
   );
-  // console.log("✅ Event listeners registered");
+
+  console.log("✅ Application event listeners registered");
 };
 
 module.exports = registerEvents;
