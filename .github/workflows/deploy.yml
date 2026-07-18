@@ -21,15 +21,32 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
 
           script: |
-            cd ~/backend_Production
+            set -e
 
-            echo "Pulling latest code..."
-            git pull origin main
+            cd /home/ubuntu/backend_Production
+
+            echo "Fetching latest code..."
+            git fetch origin main
+
+            echo "Switching to main branch..."
+            git checkout -B main origin/main
+
+            echo "Resetting EC2 code to latest GitHub main..."
+            git reset --hard origin/main
 
             echo "Installing dependencies..."
-            npm install
+            npm ci
 
             echo "Restarting PM2..."
-            pm2 restart server
+            pm2 restart server --update-env
+
+            echo "Saving PM2 process list..."
+            pm2 save
+
+            echo "Current deployed branch:"
+            git branch --show-current
+
+            echo "Current deployed commit:"
+            git log -1 --oneline
 
             echo "Deployment completed successfully!"
