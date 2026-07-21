@@ -40,6 +40,7 @@ const deleteFileIfExists = async (filePath) => {
 
 // common login api for doctor and patients
 
+
 exports.login = async (req, res) => {
   const { identifier, password, portal } = req.body;
 
@@ -53,10 +54,17 @@ exports.login = async (req, res) => {
   try {
     /* ================= FETCH USER ================= */
     const [users] = await db.query(
-      `SELECT id, email, mobile, password, role, is_active,
-              failed_attempts, lock_until
-       FROM users
-       WHERE email = ? OR mobile = ?`,
+      `SELECT id,
+          email,
+          mobile,
+          password,
+          role,
+          is_active,
+          is_deleted,
+          failed_attempts,
+          lock_until
+   FROM users
+   WHERE email = ? OR mobile = ?`,
       [identifier, identifier],
     );
 
@@ -65,7 +73,7 @@ exports.login = async (req, res) => {
       await bcrypt.compare(
         password,
         "$2b$12$C6UzMDM.H6dfI/f/IKcEeOeWZqR/3Gzdh0dX8GZFODdgNpTiFqouy",
-      ); // dummy hash for timing attack protection
+      );
 
       return res.status(401).json({
         success: false,
@@ -88,6 +96,16 @@ exports.login = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "Account inactive",
+      });
+    }
+
+    /* ================= DELETE CHECK ================= */
+
+    if (user.is_deleted === 1) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Your account has been deleted. Please contact support if you want to restore it.",
       });
     }
 
@@ -433,7 +451,6 @@ exports.uploadProfileImage = async (req, res) => {
       });
     }
 
-
     // update DB
     await db.query("UPDATE users SET profile_image = ? WHERE id = ?", [
       imageUrl,
@@ -528,7 +545,6 @@ exports.deleteProfileImage = async (req, res) => {
     });
   }
 };
-
 
 exports.googleLogin = async (req, res) => {
   const connection = await db.getConnection();
@@ -691,5 +707,85 @@ exports.googleLogin = async (req, res) => {
     });
   } finally {
     connection.release();
+  }
+};
+
+// ================= DELETE ACCOUNT =================
+
+exports.deleteAccount = async (req, res) => {
+  const { password } = req.body;
+
+  if (!password) {
+    return res.status(400).json({
+      success: false,
+      message: "Password is required",
+    });
+  }
+
+  try {
+    const userId = req.user.id;
+
+    // User details
+    const [[user]] = await db.query(
+      `SELECT id, password, role, is_deleted
+       FROM users
+       WHERE id = ?`,
+      [userId],
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Sirf Patient account delete kar sakta hai
+    if (user.role.trim().toUpperCase() !== "PATIENT") {
+      return res.status(403).json({
+        success: false,
+        message: "Only patients can delete their account.",
+      });
+    }
+
+    // Agar pehle se deleted hai
+    if (user.is_deleted === 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Account already deleted.",
+      });
+    }
+
+    // Password verify
+    const match = await bcrypt.compare(password, user.password);
+
+    if (!match) {
+      return res.status(401).json({
+        success: false,
+        message: "Incorrect password",
+      });
+    }
+
+    // Soft Delete
+    await db.query(
+      `UPDATE users
+       SET is_deleted = 1,
+           is_active = 0,
+           deleted_at = NOW()
+       WHERE id = ?`,
+      [userId],
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Your account has been deleted successfully.",
+    });
+  } catch (err) {
+    console.error("DELETE ACCOUNT ERROR:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
 };

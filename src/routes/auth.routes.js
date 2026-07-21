@@ -40,4 +40,6 @@ router.delete(
 
 router.post("/google-login", authController.googleLogin);
 
+router.delete("/account-deletion", verifyToken, authController.deleteAccount);
+
 module.exports = router;
