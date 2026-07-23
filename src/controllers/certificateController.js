@@ -497,29 +497,32 @@ exports.approveRequest = async (req, res) => {
 
     const html = generateHTML({
       certificate_id: certificateId,
-      date: new Date().toLocaleDateString(),
+      date: new Date().toLocaleDateString("en-IN"),
       patient: request.full_name,
       doctor: doctorName,
-      clinc: clinicName,
+      clinic: clinicName,
       medical_conditions: request.medical_conditions || "N/A",
-      certificateType: request.certificate_type,
-      purpose: request.purpose,
-      issueDate: new Date().toLocaleDateString(),
+      certificateType: request.certificate_type || "Medical",
+      purpose: request.purpose || "N/A",
+      issueDate: new Date().toLocaleDateString("en-IN"),
+
       expiryDate: expiryDate
-        ? new Date(expiryDate).toLocaleDateString()
+        ? new Date(expiryDate).toLocaleDateString("en-IN")
         : "N/A",
+
       dob: request.dob
         ? new Date(request.dob).toLocaleDateString("en-IN")
         : "N/A",
+
       gender: request.gender || "N/A",
-      notes: request.notes || "Normal",
+      notes: doctor_notes || request.notes || "Normal",
       treatment: fitness_status || "N/A",
       medicines: request.medications || "N/A",
-      days: validity || 0,
-      doctorImage: doctor.profile_image,
-      logo: logo,
+      validity: validity || "N/A",
+      doctorImage,
+      logo,
       qr: qrImage,
-      patientPhoto: patientPhoto,
+      patientPhoto,
     });
 
     const pdfBuffer = await generatePDF(html);

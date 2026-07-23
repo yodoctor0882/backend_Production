@@ -465,8 +465,9 @@ exports.verifyDoctorDocument = async (req, res) => {
 };
 
 // getDoctorVerification
+
 exports.getDoctorVerification = async (req, res) => {
-  const doctorId = req.params.id; // ✅ FIX
+  const doctorId = req.params.id; 
 
   try {
     // ✅ doctor by doctor.id
