@@ -17,7 +17,6 @@ const ALLOWED_RELATIONS = [
   "OTHER",
 ];
 
-// Add Family Members helpers
 const isFutureDate = (date) => {
   return new Date(date) > new Date();
 };
@@ -28,9 +27,6 @@ exports.register = async (req, res) => {
   let { fullName, phone, email, password, confirmPassword, gender, dob } =
     req.body;
 
-  // -------------------------
-  // 🔎 Basic Required Fields
-  // -------------------------
   if (
     !fullName ||
     !phone ||
@@ -46,9 +42,6 @@ exports.register = async (req, res) => {
     });
   }
 
-  // -------------------------
-  // 📧 Normalize Email
-  // -------------------------
   email = email.trim().toLowerCase();
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -59,9 +52,6 @@ exports.register = async (req, res) => {
     });
   }
 
-  // -------------------------
-  // 📱 Normalize Phone
-  // -------------------------
   phone = phone.replace(/\D/g, "");
 
   if (!/^[6-9]\d{9}$/.test(phone)) {
@@ -71,9 +61,6 @@ exports.register = async (req, res) => {
     });
   }
 
-  // -------------------------
-  // 🎂 Age Validation (18+)
-  // -------------------------
   const dobDate = new Date(dob);
   const today = new Date();
 
@@ -131,9 +118,6 @@ exports.register = async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // -------------------------
-    // 🚫 Check Duplicate (DB protected but pre-check for UX)
-    // -------------------------
     const [existingUser] = await connection.query(
       `SELECT id FROM users WHERE email = ? OR mobile = ? LIMIT 1`,
       [email, phone],
@@ -147,23 +131,14 @@ exports.register = async (req, res) => {
       });
     }
 
-    // -------------------------
-    // 🔐 Strong Hash (12 rounds)
-    // -------------------------
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    // -------------------------
-    // ✅ Insert into users (role fixed)
-    // -------------------------
     const [userResult] = await connection.query(
       `INSERT INTO users (email, mobile, password, role, is_active)
        VALUES (?, ?, ?, 'PATIENT', 1)`,
       [email, phone, hashedPassword],
     );
 
-    // -------------------------
-    // ✅ Insert into patients
-    // -------------------------
     await connection.query(
       `INSERT INTO patients
        (user_id, fullName, phone, gender, dob, email)
@@ -180,7 +155,6 @@ exports.register = async (req, res) => {
   } catch (err) {
     await connection.rollback();
 
-    // Handle MySQL duplicate key safety
     if (err.code === "ER_DUP_ENTRY") {
       return res.status(409).json({
         success: false,
@@ -252,9 +226,6 @@ exports.updateProfile = async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // -------------------------
-    // 📱 Phone Update
-    // -------------------------
     if (phone) {
       phone = phone.replace(/\D/g, "");
 
@@ -288,17 +259,10 @@ exports.updateProfile = async (req, res) => {
       patientValues.push(phone);
     }
 
-    // -------------------------
-    // Full Name
-    // -------------------------
     if (fullName) {
       patientFields.push("fullName = ?");
       patientValues.push((fullName || "").trim());
     }
-
-    // -------------------------
-    // Gender (Optional enum check)
-    // -------------------------
     if (gender) {
       const allowed = ["MALE", "FEMALE", "OTHER"];
       if (!allowed.includes(gender)) {
@@ -313,9 +277,6 @@ exports.updateProfile = async (req, res) => {
       patientValues.push(gender);
     }
 
-    // -------------------------
-    // DOB Validation (18+)
-    // -------------------------
     if (dob) {
       const dobDate = new Date(dob);
       const today = new Date();
@@ -451,110 +412,10 @@ exports.changePassword = async (req, res) => {
   }
 };
 
-// Patient getDashboard
-
-// exports.getDashboard = async (req, res) => {
-//   const patientId = req.user.id;
-
-//   try {
-//     // ✅ 0️⃣ Patient name (ADD THIS)
-//     const [[patient]] = await db.query(
-//       `SELECT fullName FROM patients WHERE user_id = ?`,
-//       [patientId],
-//     );
-
-//     // 1️⃣ Upcoming appointments count
-//     const [[upcoming]] = await db.query(
-//       `SELECT COUNT(*) AS count
-// FROM appointments a
-// WHERE a.patient_id = ?
-// AND a.appointment_date >= CURDATE()
-// AND a.status IN ('PENDING','ACCEPTED')`,
-//       [patientId],
-//     );
-
-//     // 2️⃣ Today's active token
-//     const [[todayToken]] = await db.query(
-//       `SELECT
-//    a.id,
-//    a.appointment_type,
-//    a.appointment_slot,
-//    a.token_number
-// FROM appointments a
-// WHERE a.patient_id = ?
-// AND a.appointment_date = CURDATE()
-// AND a.appointment_type IN ('CLINIC','HOSPITAL')
-// AND a.status IN ('PENDING','ACCEPTED','IN_PROGRESS')
-// ORDER BY a.appointment_slot, a.token_number
-// LIMIT 1`,
-//       [patientId],
-//     );
-
-//     // 3️⃣ Upcoming appointments list
-//     const [appointments] = await db.query(
-//       `SELECT
-//   a.id,
-//   a.family_member_id,
-//   d.doctorName,
-//   d.degree AS qualification,
-//   d.specialization,
-// d.consultationFee AS consultationFee,
-//   dc.city,
-//   d.experience_years AS experience,
-//   d.rating,
-//   dc.clinic_name,
-//   dc.languages,
-//   dc.address,
-//   u.profile_image,
-//   a.appointment_type,
-//   a.appointment_date,
-//   a.appointment_slot,
-//   a.token_number,
-//   a.status,
-//   fm.full_name AS familyName,
-//   fm.relation
-// FROM appointments a
-// JOIN doctors d ON a.doctor_id = d.id
-// JOIN doctor_clinics dc ON a.doctor_id = dc.doctor_id
-// JOIN users u
-//   ON u.id = d.user_id
-// LEFT JOIN family_members fm
-//   ON a.family_member_id = fm.id
-// WHERE a.patient_id = ?
-// AND a.appointment_date >= CURDATE()
-// AND a.status IN ('PENDING','ACCEPTED')
-// ORDER BY a.appointment_date ASC, a.appointment_slot, a.token_number`,
-//       [patientId],
-//     );
-
-//     // ✅ FINAL RESPONSE (YEH WAHI JAGAH HAI)
-//     return res.status(200).json({
-//       patientName: patient?.fullName || "Patient", // 👈 YAHAN
-
-//       upcomingCount: upcoming.count,
-//       todayToken: todayToken
-//         ? {
-//             appointmentId: todayToken.id,
-//             type: todayToken.appointment_type,
-//             slot: todayToken.appointment_slot,
-//             token: todayToken.token_number,
-//           }
-//         : null,
-//       appointments,
-//     });
-//   } catch (err) {
-//     return res.status(500).json({
-//       message: "Server error",
-//       error: err.message,
-//     });
-//   }
-// };
-
 exports.getDashboard = async (req, res) => {
   const patientId = req.user.id;
 
   try {
-    // ✅ 0️⃣ Patient name (ADD THIS)
     const [[patient]] = await db.query(
       `
 SELECT
@@ -569,7 +430,6 @@ WHERE p.user_id = ?
       [patientId],
     );
 
-    // 1️⃣ Upcoming appointments count
     const [[upcoming]] = await db.query(
       `SELECT COUNT(*) AS count
 FROM appointments a
@@ -579,7 +439,6 @@ AND a.status IN ('PENDING','ACCEPTED')`,
       [patientId],
     );
 
-    // 2️⃣ Today's active token
     const [[todayToken]] = await db.query(
       `SELECT
     a.id,
@@ -620,8 +479,6 @@ ORDER BY a.appointment_slot,a.token_number
 LIMIT 1`,
       [patientId],
     );
-
-    // 3️⃣ Upcoming appointments list
     const [appointments] = await db.query(
       `SELECT
   a.id,
@@ -631,6 +488,7 @@ LIMIT 1`,
   d.specialization,
 d.consultationFee AS consultationFee,
   dc.city,
+  dc.maps_link,
   d.experience_years AS experience,
   d.rating,
   dc.clinic_name,
@@ -657,8 +515,6 @@ AND a.status IN ('PENDING','ACCEPTED')
 ORDER BY a.appointment_date ASC, a.appointment_slot, a.token_number`,
       [patientId],
     );
-
-    // ✅ FINAL RESPONSE (YEH WAHI JAGAH HAI)
     return res.status(200).json({
       patientName: patient?.fullName || "Patient",
 
@@ -716,30 +572,49 @@ exports.searchVisitDoctors = async (req, res) => {
   let page = parseInt(req.query.page, 10) || 1;
   let limit = parseInt(req.query.limit, 10) || 10;
 
-  // -------------------------
-  // 🔐 Pagination Safety
+
   // -------------------------
   if (page < 1) page = 1;
   if (limit < 1) limit = 10;
-  if (limit > 50) limit = 50; // prevent heavy load abuse
+  if (limit > 50) limit = 50; 
 
   const offset = (page - 1) * limit;
+
+  const daysMap = {
+    0: "Sun",
+    1: "Mon",
+    2: "Tue",
+    3: "Wed",
+    4: "Thu",
+    5: "Fri",
+    6: "Sat",
+  };
+
+  const todayCode = daysMap[new Date().getDay()];
 
   try {
     const [doctors] = await db.query(
       `SELECT 
-          d.id AS doctorId,
-          d.doctorName,
-          d.specialization,
-          dc.clinic_name AS clinicName,
-          dc.city,
-          d.rating,
-          d.consultationFee,
-          d.experience_years AS experience,
-          u.profile_image
+    d.id AS doctorId,
+    d.doctorName,
+    d.specialization,
+    d.is_available,
+    CASE
+    WHEN da.doctor_id IS NOT NULL THEN 1
+    ELSE 0
+END AS available_today,
+    dc.clinic_name AS clinicName,
+    dc.city,
+    d.rating,
+    d.consultationFee,
+    d.experience_years AS experience,
+    u.profile_image
        FROM doctors d
 LEFT JOIN users u ON u.id = d.user_id
 LEFT JOIN doctor_clinics dc ON dc.doctor_id = d.id
+LEFT JOIN doctor_availability da
+ON da.doctor_id = d.id
+AND da.day_code = ?
 INNER JOIN subscriptions s ON s.user_id = d.user_id
 
 WHERE d.status = 'APPROVED'
@@ -755,6 +630,7 @@ AND s.current_period_end >= NOW()
         ORDER BY d.rating DESC
         LIMIT ? OFFSET ?`,
       [
+        todayCode,
         search,
         `%${search}%`,
         `%${search}%`,
@@ -783,78 +659,33 @@ AND s.current_period_end >= NOW()
   }
 };
 
-// exports.getDoctorById = async (req, res) => {
-//   const doctorId = req.params.id;
-
-//   try {
-//     // ✅ FIXED: removed d.qualification (column doesn't exist — use d.degree instead)
-//     // ✅ FIXED: removed d.available_days (column doesn't exist — availability is in
-//     //           doctor_availability table, joined below as a JSON-aggregated field)
-//     const [rows] = await db.query(
-//       `SELECT
-//   d.id AS doctorId,
-//   d.doctorName,
-//   d.specialization,
-//   d.degree,
-//   d.degree AS qualification,
-//   dc.clinic_name AS clinicName,
-//   dc.address,
-//   dc.city,
-//   d.licenseNumber,
-//   d.consultationFee,
-//   d.experience_years,
-//   d.rating,
-//   dc.languages,
-//   d.bio AS description,
-//   d.consultation_duration AS timings,
-//   u.profile_image,
-//   (
-//     SELECT JSON_ARRAYAGG(da.day_code)
-//     FROM doctor_availability da
-//     WHERE da.doctor_id = d.id
-//   ) AS availableDays
-// FROM doctors d
-// LEFT JOIN users u ON u.id = d.user_id
-// LEFT JOIN doctor_clinics dc ON dc.doctor_id = d.id
-// WHERE d.id = ?`,
-//       [doctorId],
-//     );
-
-//     if (!rows.length) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Doctor not found",
-//       });
-//     }
-
-//     res.json({
-//       success: true,
-//       doctor: rows[0],
-//     });
-//   } catch (err) {
-//     console.log(err);
-//     res.status(500).json({
-//       success: false,
-//       message: "Internal server error",
-//     });
-//   }
-// };
-
-// getCurrentToken controller
-
 exports.getDoctorById = async (req, res) => {
   const doctorId = req.params.id;
 
+  const daysMap = {
+    0: "Sun",
+    1: "Mon",
+    2: "Tue",
+    3: "Wed",
+    4: "Thu",
+    5: "Fri",
+    6: "Sat",
+  };
+
+  const todayCode = daysMap[new Date().getDay()];
+
   try {
-    // ✅ FIXED: removed d.qualification (column doesn't exist — use d.degree instead)
-    // ✅ FIXED: removed d.available_days (column doesn't exist — availability is in
-    //           doctor_availability table, joined below as a JSON-aggregated field)
     const [rows] = await db.query(
       `SELECT
   d.id AS doctorId,
   d.doctorName,
   d.specialization,
   d.degree,
+  d.is_available,
+CASE
+    WHEN today_da.doctor_id IS NOT NULL THEN 1
+    ELSE 0
+END AS available_today,
   d.degree AS qualification,
   dc.clinic_name AS clinicName,
   dc.address,
@@ -864,8 +695,8 @@ exports.getDoctorById = async (req, res) => {
   d.experience_years,
   d.rating,
   dc.languages,
+  dc.maps_link,
   d.bio AS description,
-  d.consultation_duration AS timings,
   d.consultation_duration AS timings,
 (
   SELECT JSON_OBJECT(
@@ -903,8 +734,11 @@ exports.getDoctorById = async (req, res) => {
 FROM doctors d
 LEFT JOIN users u ON u.id = d.user_id
 LEFT JOIN doctor_clinics dc ON dc.doctor_id = d.id
+LEFT JOIN doctor_availability today_da
+ON today_da.doctor_id = d.id
+AND today_da.day_code = ?
 WHERE d.id = ?`,
-      [doctorId],
+      [todayCode, doctorId],
     );
 
     if (!rows.length) {
@@ -1085,9 +919,6 @@ ORDER BY d.specialization;`,
   }
 };
 
-// returns both clinic & hospital names controller
-// ✅ FIXED: was querying 'clinicName' from 'doctors' table — column doesn't exist there.
-// Clinic names are stored in doctor_clinics table.
 exports.getPlaceNames = async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -1135,6 +966,21 @@ exports.bookVisitAppointment = async (req, res) => {
   try {
     await connection.beginTransaction();
 
+    const [[doctorStatus]] = await connection.query(
+      `SELECT is_available
+   FROM doctors
+   WHERE id = ?`,
+      [doctorId],
+    );
+
+    if (!doctorStatus) {
+      throw new Error("Doctor not found");
+    }
+
+    if (!doctorStatus.is_available) {
+      throw new Error("Doctor is currently unavailable");
+    }
+
     const getTodayDate = () => {
       const now = new Date();
       return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
@@ -1145,8 +991,6 @@ exports.bookVisitAppointment = async (req, res) => {
     const today = getTodayDate();
 
     const isToday = appointmentDate === today;
-
-    // ✅ ADD THIS
     const [year, month, day] = appointmentDate.split("-").map(Number);
     const localDate = new Date(year, month - 1, day);
 
@@ -1161,8 +1005,6 @@ exports.bookVisitAppointment = async (req, res) => {
     };
 
     const dayCode = daysMap[localDate.getDay()];
-
-    // ✅ THEN query
     const [availabilityRows] = await connection.query(
       `SELECT morning_start, morning_end, evening_start, evening_end
    FROM doctor_availability
@@ -1202,7 +1044,6 @@ exports.bookVisitAppointment = async (req, res) => {
     const now = new Date();
     const currentHHMM = now.getHours() * 60 + now.getMinutes();
 
-    // ❌ Edge Case 2: Slot not available
     if (slot === "MORNING" && (!morningStart || !morningEnd)) {
       throw new Error("Doctor not available in morning");
     }
@@ -1211,7 +1052,6 @@ exports.bookVisitAppointment = async (req, res) => {
       throw new Error("Doctor not available in evening");
     }
 
-    // ❌ Edge Case 1 & 6: Today cutoff (boundary handled)
     if (isToday) {
       if (slot === "MORNING") {
         const cutoff = morningEnd - 10;
@@ -1228,7 +1068,6 @@ exports.bookVisitAppointment = async (req, res) => {
       }
     }
 
-    // ❌ Edge Case 3 & 4: Duplicate active token (same slot)
     const [[existing]] = await connection.query(
       `SELECT id FROM appointments
        WHERE patient_id = ?
@@ -1242,8 +1081,6 @@ exports.bookVisitAppointment = async (req, res) => {
     if (existing && familyMemberIds.length === 0) {
       throw new Error("You already have active token");
     }
-
-    // ❌ Edge Case 5: Max 50 tokens per shift
     const [[countRow]] = await connection.query(
       `SELECT COUNT(*) AS total
        FROM appointments
@@ -1258,8 +1095,6 @@ exports.bookVisitAppointment = async (req, res) => {
     if (countRow.total >= MAX_TOKENS) {
       throw new Error(`${slot} shift full`);
     }
-
-    // 🔢 Token generation (safe)
     const [[row]] = await connection.query(
       `SELECT MAX(token_number) AS lastToken
        FROM appointments
@@ -1291,23 +1126,21 @@ exports.bookVisitAppointment = async (req, res) => {
       ],
     );
 
-    // ✅ STEP: get doctor user_id
-  const [[doctor]] = await connection.query(
-  `SELECT d.user_id, u.email
+    const [[doctor]] = await connection.query(
+      `SELECT d.user_id, u.email
    FROM doctors d
    JOIN users u ON d.user_id = u.id
    WHERE d.id = ?`,
-  [doctorId],
-);
+      [doctorId],
+    );
 
-await connection.commit();
+    await connection.commit();
 
-eventBus.emit(EVENTS.APPOINTMENT_REQUESTED, {
-  appointmentId: result.insertId,
-  doctorId: doctor.user_id,
-  doctorEmail: doctor.email,
-
-});
+    eventBus.emit(EVENTS.APPOINTMENT_REQUESTED, {
+      appointmentId: result.insertId,
+      doctorId: doctor.user_id,
+      doctorEmail: doctor.email,
+    });
 
     res.status(201).json({
       message: "Clinic appointment booked",
@@ -1400,26 +1233,26 @@ exports.cancelAppointment = async (req, res) => {
     }
 
     const [[appointment]] = await db.query(
-  `SELECT d.user_id, u.email
+      `SELECT d.user_id, u.email
    FROM appointments a
    JOIN doctors d ON a.doctor_id = d.id
    JOIN users u ON d.user_id = u.id
    WHERE a.id = ?`,
-  [appointmentId]
-);
+      [appointmentId],
+    );
 
-if (!appointment) {
-  return res.status(404).json({
-    success: false,
-    message: "Doctor not found",
-  });
-}
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: "Doctor not found",
+      });
+    }
 
-eventBus.emit(EVENTS.APPOINTMENT_CANCELLED_BY_PATIENT, {
-  appointmentId,
-  doctorId: appointment.user_id,
-  doctorEmail: appointment.email,
-});
+    eventBus.emit(EVENTS.APPOINTMENT_CANCELLED_BY_PATIENT, {
+      appointmentId,
+      doctorId: appointment.user_id,
+      doctorEmail: appointment.email,
+    });
 
     return res.status(200).json({
       success: true,
@@ -1447,7 +1280,7 @@ exports.getVisitAppointmentHistory = async (req, res) => {
   const cursor = req.query.cursor;
 
   let cursorCondition = "";
-  let queryParams = [userId, userId]; // patient + family member
+  let queryParams = [userId, userId];
 
   if (cursor) {
     const [cursorDateRaw, cursorId] = cursor.split("_");
@@ -1675,8 +1508,6 @@ exports.qrBookVisit = async (req, res) => {
     const eveningEnd = toMinutes(avail.evening_end);
 
     let selectedShift = null;
-
-    // ✅ Only END TIME check (no start time, no cutoff)
     if (
       morningStart !== null &&
       morningEnd !== null &&
@@ -1695,7 +1526,6 @@ exports.qrBookVisit = async (req, res) => {
       throw new Error("Booking closed for today");
     }
 
-    // ❌ Duplicate same doctor + same slot
     const [[existing]] = await connection.query(
       `SELECT a.id
        FROM appointments a
@@ -1712,8 +1542,6 @@ exports.qrBookVisit = async (req, res) => {
     if (existing && familyMemberIds.length === 0) {
       throw new Error("You already have active token");
     }
-
-    // ❌ Max 50 tokens
     const [[countRow]] = await connection.query(
       `SELECT COUNT(*) AS total
        FROM appointments
@@ -1728,8 +1556,6 @@ exports.qrBookVisit = async (req, res) => {
     if (countRow.total >= MAX_TOKENS) {
       throw new Error(`${selectedShift} shift full`);
     }
-
-    // 🔢 Token generation (safe)
     const [[row]] = await connection.query(
       `SELECT MAX(token_number) AS lastToken
        FROM appointments
@@ -1794,91 +1620,12 @@ exports.qrBookVisit = async (req, res) => {
     connection.release();
   }
 };
-// getTokenStatus
-
-// exports.getTokenStatus = async (req, res) => {
-//   const patientId = req.user.id;
-//   const { appointmentId } = req.params;
-
-//   try {
-//     // ✅ FIXED APPOINTMENT QUERY
-//     const [[appointment]] = await db.query(
-//       `SELECT
-//         a.id,
-//         a.doctor_id,
-//         a.token_number,
-//         a.appointment_date,
-//         a.appointment_slot,
-//         a.status,
-//         d.consultation_duration
-//        FROM appointments a
-//        JOIN doctors d ON d.id = a.doctor_id
-//        WHERE a.id = ?
-//        AND (
-//          a.patient_id = ?
-//          OR a.id IN (
-//            SELECT appointment_id
-//            FROM appointment_patients
-//            WHERE patient_id = ?
-//          )
-//        )`,
-//       [appointmentId, patientId, patientId],
-//     );
-
-//     if (!appointment) {
-//       return res.status(404).json({ message: "Appointment not found" });
-//     }
-
-//     // ✅ SLOT BASED IN_PROGRESS
-//     const [[inProgress]] = await db.query(
-//       `SELECT token_number
-//        FROM appointments
-//        WHERE doctor_id = ?
-//        AND appointment_date = ?
-//        AND appointment_slot = ?
-//        AND status = 'IN_PROGRESS'
-//        ORDER BY token_number
-//        LIMIT 1`,
-//       [
-//         appointment.doctor_id,
-//         appointment.appointment_date,
-//         appointment.appointment_slot,
-//       ],
-//     );
-
-//     let nowServing = null;
-//     if (inProgress) {
-//       nowServing = inProgress.token_number;
-//     }
-
-//     // ✅ WAIT TIME
-//     const durationMins = parseInt(appointment.consultation_duration, 10) || 5;
-
-//     const estimatedWaitMinutes =
-//       nowServing !== null
-//         ? Math.max(appointment.token_number - nowServing, 0) * durationMins
-//         : 0;
-
-//     return res.json({
-//       yourToken: appointment.token_number,
-//       nowServing,
-//       status: appointment.status,
-//       estimatedWaitMinutes,
-//     });
-//   } catch (err) {
-//     return res.status(500).json({
-//       message: "Server error",
-//       error: err.message,
-//     });
-//   }
-// };
 
 exports.getTokenStatus = async (req, res) => {
   const patientId = req.user.id;
   const { appointmentId } = req.params;
 
   try {
-    // ✅ FIXED APPOINTMENT QUERY
     const [[appointment]] = await db.query(
       `SELECT 
         a.id,
@@ -1905,8 +1652,6 @@ exports.getTokenStatus = async (req, res) => {
     if (!appointment) {
       return res.status(404).json({ message: "Appointment not found" });
     }
-
-    // ✅ SLOT BASED IN_PROGRESS
     const [[inProgress]] = await db.query(
       `SELECT token_number
        FROM appointments
@@ -1928,7 +1673,6 @@ exports.getTokenStatus = async (req, res) => {
       nowServing = inProgress.token_number;
     }
 
-    // ✅ WAIT TIME
     const durationMins = parseInt(appointment.consultation_duration, 10) || 5;
 
     const estimatedWaitMinutes =
@@ -1988,7 +1732,6 @@ exports.addFamilyMember = async (req, res) => {
   }
 
   try {
-    // 🚫 Duplicate check
     const [[exists]] = await db.query(
       `SELECT id FROM family_members
        WHERE patient_id = ? AND full_name = ? AND relation = ?`,
@@ -2070,9 +1813,6 @@ exports.updateFamilyMember = async (req, res) => {
     req.body;
 
   try {
-    // ---------------------------------
-    // 1️⃣ Check member exists
-    // ---------------------------------
     const [[existingMember]] = await db.query(
       `SELECT full_name, relation
        FROM family_members
@@ -2086,9 +1826,6 @@ exports.updateFamilyMember = async (req, res) => {
       });
     }
 
-    // ---------------------------------
-    // 2️⃣ Validations
-    // ---------------------------------
     if (dob && isFutureDate(dob)) {
       return res.status(400).json({
         message: "DOB cannot be in the future",
@@ -2113,9 +1850,6 @@ exports.updateFamilyMember = async (req, res) => {
       });
     }
 
-    // ---------------------------------
-    // 3️⃣ Duplicate prevention
-    // ---------------------------------
     const newName = fullName || existingMember.full_name;
     const newRelation = relation || existingMember.relation;
 
@@ -2134,9 +1868,6 @@ exports.updateFamilyMember = async (req, res) => {
       });
     }
 
-    // ---------------------------------
-    // 4️⃣ Build dynamic update
-    // ---------------------------------
     const fields = [];
     const values = [];
 
@@ -2202,6 +1933,7 @@ exports.updateFamilyMember = async (req, res) => {
 };
 
 //deleteFamilyMember
+
 exports.deleteFamilyMember = async (req, res) => {
   const patientId = req.user.id;
   const { id } = req.params;
@@ -2230,7 +1962,6 @@ exports.deleteFamilyMember = async (req, res) => {
   }
 };
 
-
 // Patient submitDoctorReview
 
 exports.submitDoctorReview = async (req, res) => {
@@ -2249,7 +1980,6 @@ exports.submitDoctorReview = async (req, res) => {
   await connection.beginTransaction();
 
   try {
-    // 1️⃣ Validate appointment
     const [[appointment]] = await connection.query(
       `SELECT doctor_id
        FROM appointments
@@ -2268,7 +1998,6 @@ exports.submitDoctorReview = async (req, res) => {
 
     const doctorId = appointment.doctor_id;
 
-    // 2️⃣ Check duplicate feedback
     const [[existing]] = await connection.query(
       `SELECT id FROM doctor_feedback
        WHERE appointment_id = ?
@@ -2283,7 +2012,6 @@ exports.submitDoctorReview = async (req, res) => {
       });
     }
 
-    // 3️⃣ Insert feedback
     await connection.query(
       `INSERT INTO doctor_feedback
        (appointment_id, doctor_id, patient_id, rating, comment)
@@ -2291,7 +2019,6 @@ exports.submitDoctorReview = async (req, res) => {
       [appointmentId, doctorId, patientId, rating, comment || null],
     );
 
-    // 4️⃣ Update doctor rating
     await connection.query(
       `UPDATE doctors
        SET rating =
@@ -2382,7 +2109,6 @@ exports.getPrescription = async (req, res) => {
   }
 };
 
-
 // ✅ POST → Create Booking
 
 exports.bookhomecareservices = async (req, res) => {
@@ -2468,7 +2194,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?)
   }
 };
 
-// ✅ GET → Get All Bookings
+// ✅ GET → Get All Booking
+
 exports.getbookhomecareservices = async (req, res) => {
   try {
     const [rows] = await db.execute(
@@ -2488,9 +2215,7 @@ exports.getbookhomecareservices = async (req, res) => {
   }
 };
 
-// =========================
 // GET CATEGORIES
-// =========================
 
 exports.getCategories = async (req, res) => {
   try {
@@ -2513,9 +2238,7 @@ exports.getCategories = async (req, res) => {
   }
 };
 
-// =========================
 // GET ALL TESTS
-// =========================
 
 exports.getTests = async (req, res) => {
   try {
@@ -2566,9 +2289,7 @@ exports.getTests = async (req, res) => {
   }
 };
 
-// =========================
 // POPULAR TESTS
-// =========================
 
 exports.getPopularTests = async (req, res) => {
   try {
@@ -2593,9 +2314,7 @@ exports.getPopularTests = async (req, res) => {
   }
 };
 
-// =========================
 // PACKAGES
-// =========================
 
 exports.getPackages = async (req, res) => {
   try {
@@ -2619,9 +2338,7 @@ exports.getPackages = async (req, res) => {
   }
 };
 
-// =========================
 // TEST DETAILS
-// =========================
 
 exports.getTestDetails = async (req, res) => {
   try {
@@ -2667,9 +2384,7 @@ exports.getTestDetails = async (req, res) => {
   }
 };
 
-// =========================
 // CREATE BOOKING
-// =========================
 
 exports.createBooking = async (req, res) => {
   const conn = await db.getConnection();
@@ -2795,9 +2510,7 @@ exports.createBooking = async (req, res) => {
   }
 };
 
-// =========================
 // MY BOOKINGS
-// =========================
 
 exports.getLabBookings = async (req, res) => {
   try {
@@ -2828,9 +2541,7 @@ ORDER BY lb.id DESC
   }
 };
 
-// =========================
 // BOOKING DETAILS
-// =========================
 
 exports.getLabBookingDetails = async (req, res) => {
   try {

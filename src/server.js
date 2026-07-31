@@ -1,23 +1,3 @@
-// require("dotenv").config();
-
-// const app = require("./app");
-
-// const syncPlans = require("./utils/syncPlans");
-
-// const PORT = process.env.PORT || 4000;
-
-// (async () => {
-//   try {
-//     await syncPlans();
-
-//     app.listen(PORT, () => {
-//       console.log(`🚀 Server running on port ${PORT}`);
-//     });
-//   } catch (err) {
-//     console.error("Startup Error:", err);
-//   }
-// })();
-
 require("dotenv").config();
 
 const http = require("http");
@@ -48,27 +28,14 @@ const startServer = async () => {
   try {
     await syncPlans();
 
-    console.log("✅ Subscription plans synchronized");
-
-    /*
-     * Handlers may use SocketManager, so register only after
-     * initializeSocket().
-     */
     registerEvents();
-
-    /*
-     * Cron jobs may emit events, so start them after Socket.IO
-     * and event listeners are ready.
-     */
     expireCertificatesJob();
     activateScheduledUpgrades();
 
     httpServer.listen(PORT, HOST, () => {
       console.log(`🚀 Server running on ${HOST}:${PORT}`);
-      console.log("✅ Socket.IO server ready");
     });
   } catch (error) {
-    console.error("❌ Startup Error:", error);
     process.exit(1);
   }
 };

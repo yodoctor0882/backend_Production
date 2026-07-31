@@ -1,31 +1,3 @@
-// const express = require("express");
-// const app = express();
-
-// app.set("trust proxy", 1);
-
-// app.disable("x-powered-by");
-// require("dotenv").config();
-// const requiredEnv = [
-//   "RAZORPAY_KEY_ID",
-//   "RAZORPAY_KEY_SECRET",
-//   "RAZORPAY_WEBHOOK_SECRET",
-//   "JWT_SECRET",
-// ];
-// requiredEnv.forEach((key) => {
-//   if (!process.env[key]) {
-//     throw new Error(`${key} is missing in .env`);
-//   }
-// });
-// const cors = require("cors");
-
-// const path = require("path");
-
-// const helmet = require("helmet");
-// const morgan = require("morgan");
-// const rateLimit = require("express-rate-limit");
-
-// app.use(helmet());
-
 require("dotenv").config();
 
 const express = require("express");
@@ -33,11 +5,15 @@ const cors = require("cors");
 const path = require("path");
 const helmet = require("helmet");
 const morgan = require("morgan");
-const rateLimit = require("express-rate-limit");
+
+
 const {
   authLimiter,
+  // apiLimiter,
   paymentLimiter,
 } = require("./middleware/rateLimit");
+
+
 
 const app = express();
 
@@ -56,9 +32,13 @@ requiredEnv.forEach((key) => {
     throw new Error(`${key} is missing in .env`);
   }
 });
+
+app.use(helmet());
+
 app.use("/auth", authLimiter);
 app.use("/razorpay", paymentLimiter);
-app.use(helmet());
+// app.use(["/patient", "/doctor", "/admin"], apiLimiter);
+
 
 
 const expireCertificatesJob = require("../cron/expireCertificates");
@@ -104,22 +84,10 @@ app.use(
 );
 
 
-
 app.use(
   "/razorpay/webhooks/razorpay",
   express.raw({ type: "application/json" }),
 );
-
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: {
-    success: false,
-    message: "Too many requests, please try again later.",
-  },
-});
-
-app.use(["/auth", "/patient", "/doctor", "/admin"], limiter);
 
 expireCertificatesJob();
 

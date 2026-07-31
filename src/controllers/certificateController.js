@@ -79,7 +79,6 @@ exports.createRequest = async (req, res) => {
 
     const doctorUserId = doctorRows[0]?.user_id;
 
-    // 🔥 EVENT FIRE
     eventBus.emit(EVENTS.CERTIFICATE_REQUEST_CREATED, {
       doctorId: doctorUserId,
       patientName: full_name,
@@ -96,7 +95,6 @@ exports.createRequest = async (req, res) => {
     });
   } catch (error) {
     if (connection) await connection.rollback();
-    console.error("❌ Transaction Error:", error);
 
     res.status(500).json({
       message: "Failed to create request",
@@ -119,14 +117,12 @@ exports.uploadDocument = async (req, res) => {
       });
     }
 
-    // ✅ CORRECT CHECK
     if (!req.files || Object.keys(req.files).length === 0) {
       return res.status(400).json({
         message: "No files uploaded",
       });
     }
 
-    // ✅ REQUIRED FILE VALIDATION
     if (!req.files.profilePhoto) {
       return res.status(400).json({
         message: "Profile photo is required",
@@ -139,7 +135,6 @@ exports.uploadDocument = async (req, res) => {
       });
     }
 
-    // ✅ SAVE FILES
     const allFiles = [
       ...(req.files.profilePhoto || []).map((f) => ({
         ...f,
@@ -169,7 +164,6 @@ exports.uploadDocument = async (req, res) => {
       message: "Documents uploaded successfully",
     });
   } catch (error) {
-    console.error("❌ Upload Error:", error);
     res.status(500).json({
       message: "Internal server error",
     });
@@ -218,7 +212,6 @@ exports.getMyRequests = async (req, res) => {
 
     res.status(200).json(formattedData);
   } catch (error) {
-    console.error("❌ Error fetching certificates:", error);
     res.status(500).json({
       message: "Failed to fetch certificate requests",
     });
@@ -263,7 +256,6 @@ exports.getRequestById = async (req, res) => {
       timeline: timelineRows,
     });
   } catch (error) {
-    console.error("❌ Error fetching request details:", error);
     res.status(500).json({
       message: "Failed to fetch request details",
     });
@@ -286,8 +278,6 @@ exports.downloadCertificate = async (req, res) => {
     }
 
     const filePath = path.join(process.cwd(), rows[0].certificate_file);
-
-    console.log("📥 Downloading:", filePath);
 
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ message: "File not found on server" });
@@ -349,12 +339,6 @@ exports.getRequestByIdForDoctor = async (req, res) => {
       [id],
     );
 
-    //   await db.query(
-    //     `INSERT INTO certificate_request_timeline
-    //  (request_id, label, state)
-    //  VALUES (?, 'Under Verification', 'active')`,
-    //     [id],
-    //   );
 
     if (!rows.length) {
       return res.status(404).json({ message: "Request not found" });
@@ -390,18 +374,15 @@ exports.getDocumentsByRequestId = async (req, res) => {
 // approveRequest Api
 
 exports.approveRequest = async (req, res) => {
-  console.log("API HIT");
   const logoPath = path.join(process.cwd(), "src/assets/logo.webp");
   const logoBase64 = fs.readFileSync(logoPath, { encoding: "base64" });
   const logo = `data:image/webp;base64,${logoBase64}`;
 
   try {
-    console.log("1");
     const { id } = req.params;
     const doctorUserId = req.user.id;
     const { doctor_notes, fitness_status, validity } = req.body;
 
-    // Doctor ID fetch karein
     const [doctorRows] = await db.query(
       `SELECT
     d.id,
@@ -413,18 +394,15 @@ exports.approveRequest = async (req, res) => {
       [doctorUserId],
     );
 
-    console.log("2");
-
     const doctor = doctorRows[0];
 
     if (doctorRows.length === 0) {
       return res.status(404).json({ message: "Doctor not found" });
     }
-    console.log("3");
+
     const doctorId = doctorRows[0].id;
     const doctorName = doctorRows[0].doctorName;
 
-    // Certificate request data fetch karein
     const [requestRows] = await db.query(
       `SELECT
     full_name,
@@ -446,7 +424,6 @@ exports.approveRequest = async (req, res) => {
 
     const request = requestRows[0];
 
-    // ✅ GET CLINIC NAME
     const [clinicRows] = await db.query(
       "SELECT clinic_name FROM doctor_clinics WHERE doctor_id = ? LIMIT 1",
       [doctorId],
@@ -454,11 +431,9 @@ exports.approveRequest = async (req, res) => {
 
     const clinicName = clinicRows[0]?.clinic_name || " ";
 
-    // Certificate ID generate karein
     const certificateId = generateCertificateId();
     const expiryDate = calculateExpiry(validity);
 
-    // PDF path
     const dirPath = path.join(process.cwd(), "uploads/certificates");
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
@@ -466,12 +441,11 @@ exports.approveRequest = async (req, res) => {
 
     const certificateFile = `uploads/certificates/${certificateId}.pdf`;
     const filePath = path.join(process.cwd(), certificateFile);
-    //  Puppeteer PDF Generate
 
     const qrData = `${process.env.BASE_URL}/verify/${certificateId}`;
     const qrImage = await QRCode.toDataURL(qrData);
 
-    //  GET PATIENT PROFILE PHOTO
+
     const [docRows] = await db.query(
       `SELECT file_url
    FROM certificate_documents
@@ -493,7 +467,6 @@ exports.approveRequest = async (req, res) => {
       }
     }
 
-    console.log("4");
 
     const html = generateHTML({
       certificate_id: certificateId,
@@ -570,8 +543,6 @@ exports.approveRequest = async (req, res) => {
     );
 
     const patient = patientRows[0];
-
-    // 🔥 EVENT FIRE
     eventBus.emit(EVENTS.CERTIFICATE_APPROVED, {
       patientId: patient.user_id,
       patientEmail: patient.email,
@@ -582,7 +553,6 @@ exports.approveRequest = async (req, res) => {
       message: "Certificate approved and PDF generated successfully",
       certificateId,
     });
-    console.log("5");
   } catch (error) {
     console.error("Approve Error:", error);
     res.status(500).json({ message: "Server Error" });
@@ -595,8 +565,6 @@ exports.rejectRequest = async (req, res) => {
   try {
     const { id } = req.params;
     const doctorUserId = req.user.id;
-
-    // 🔥 doctor table se actual doctor_id nikalo
     const [doctorRows] = await db.query(
       "SELECT id FROM doctors WHERE user_id = ?",
       [doctorUserId],
@@ -685,7 +653,6 @@ exports.getIssuedCertificates = async (req, res) => {
   try {
     const doctorUserId = req.user.id;
 
-    // Doctor table se doctor_id nikalein
     const [doctorRows] = await db.query(
       "SELECT id FROM doctors WHERE user_id = ?",
       [doctorUserId],

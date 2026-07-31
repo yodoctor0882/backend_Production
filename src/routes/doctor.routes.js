@@ -7,7 +7,7 @@ const { requireActiveUser } = require("../middleware/activeUser");
 const upload = require("../middleware/upload.middleware");
 const uploadDoctorDocs = require("../middleware/uploadDoctorDocs");
 
-const { apiLimiter } = require("../middleware/rateLimit");
+// const { apiLimiter } = require("../middleware/rateLimit");
 
 // ─────────────────────────────────────────
 // Dashboard
@@ -291,7 +291,6 @@ router.get("/alldoctors", doctorController.getAllDoctors);
 
 router.get(
   "/verification-status",
-  apiLimiter,
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.getDoctorVerificationStatus,
