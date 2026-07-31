@@ -79,6 +79,7 @@ router.get(
 );
 
 // Approve certificate
+
 router.put(
   "/approve/:id",
   verifyToken,
@@ -86,6 +87,15 @@ router.put(
   allowRoles("DOCTOR"),
   certificateController.approveRequest
 );
+
+// router.put(
+//   "/approve/:id",
+//   verifyToken,
+//   apiLimiter,
+//   requireActiveUser,
+//   allowRoles("DOCTOR"),
+//   certificateController.approveRequest,
+// );
 
 // Reject certificate
 router.put(

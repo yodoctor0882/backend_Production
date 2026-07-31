@@ -14,15 +14,13 @@ const s3 = require("../config/s3");
 const { sendEmail } = require("../utils/email.service");
 const resetPasswordTemplate = require("../utils/emailTemplates/resetPassword.template");
 
-//COMMON HELPERS
-
 const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
 
 const response = (res, status, success, message) => {
   return res.status(status).json({ success, message });
 };
 
-// helper to build full URL
+
 const buildImageUrl = (req, relativePath) => {
   if (!relativePath) return null;
   return `${req.protocol}://${req.get("host")}/${relativePath}`;
@@ -33,7 +31,7 @@ const deleteFileIfExists = async (filePath) => {
     await fs.promises.unlink(filePath);
   } catch (err) {
     if (err.code !== "ENOENT") {
-      throw err; // ignore file not found, throw others
+      throw err; 
     }
   }
 };
@@ -52,7 +50,6 @@ exports.login = async (req, res) => {
   }
 
   try {
-    /* ================= FETCH USER ================= */
     const [users] = await db.query(
       `SELECT id,
           email,
@@ -68,7 +65,6 @@ exports.login = async (req, res) => {
       [identifier, identifier],
     );
 
-    /* ================= USER NOT FOUND ================= */
     if (users.length === 0) {
       await bcrypt.compare(
         password,
@@ -82,24 +78,18 @@ exports.login = async (req, res) => {
     }
 
     const user = users[0];
-
-    /* ================= ACCOUNT LOCK CHECK ================= */
     if (user.lock_until && new Date(user.lock_until) > new Date()) {
       return res.status(423).json({
         success: false,
         message: "Account locked. Try again after 24 hours.",
       });
     }
-
-    /* ================= ACTIVE CHECK ================= */
     if (user.is_active === 0) {
       return res.status(403).json({
         success: false,
         message: "Account inactive",
       });
     }
-
-    /* ================= DELETE CHECK ================= */
 
     if (user.is_deleted === 1) {
       return res.status(403).json({
@@ -108,8 +98,6 @@ exports.login = async (req, res) => {
           "Your account has been deleted. Please contact support if you want to restore it.",
       });
     }
-
-    /* ================= PASSWORD CHECK ================= */
     const match = await bcrypt.compare(password, user.password);
 
     if (!match) {
@@ -143,8 +131,6 @@ exports.login = async (req, res) => {
         });
       }
     }
-
-    /* ================= SUCCESS → RESET ATTEMPTS ================= */
     await db.query(
       `UPDATE users
        SET failed_attempts = 0,
@@ -168,8 +154,6 @@ exports.login = async (req, res) => {
         message: "Please use doctor login page",
       });
     }
-
-    /* ================= DOCTOR FLOW ================= */
     if (user.role?.trim().toUpperCase() === "DOCTOR") {
       const [[doctor]] = await db.query(
         `SELECT status, current_step FROM doctors WHERE user_id = ?`,
@@ -191,8 +175,6 @@ exports.login = async (req, res) => {
         process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRES_IN || "1d" },
       );
-
-      /* ===== IN_PROGRESS → Resume ===== */
       if (doctor.status === "IN_PROGRESS") {
         return res.status(200).json({
           success: true,
@@ -204,7 +186,6 @@ exports.login = async (req, res) => {
         });
       }
 
-      /* ===== PENDING_VERIFICATION ===== */
       if (doctor.status === "PENDING") {
         return res.status(200).json({
           success: true,
@@ -214,8 +195,6 @@ exports.login = async (req, res) => {
           data: { token },
         });
       }
-
-      /* ===== APPROVED ===== */
       if (doctor.status === "APPROVED") {
         return res.status(200).json({
           success: true,
@@ -227,7 +206,6 @@ exports.login = async (req, res) => {
       }
     }
 
-    /* ================= PATIENT FLOW ================= */
     if (user.role?.trim().toUpperCase() === "PATIENT") {
       const token = jwt.sign(
         {
@@ -245,8 +223,6 @@ exports.login = async (req, res) => {
         data: { token },
       });
     }
-
-    /* ================= ADMIN FLOW ================= */
     if (user.role?.trim().toUpperCase() === "ADMIN") {
       const token = jwt.sign(
         {
@@ -265,7 +241,6 @@ exports.login = async (req, res) => {
       });
     }
 
-    /* ================= FALLBACK ================= */
     return res.status(403).json({
       success: false,
       message: "Invalid role",
@@ -302,7 +277,6 @@ exports.forgotPassword = async (req, res) => {
       return response(res, 404, false, "Please enter correct email");
     }
 
-    // 🔒 Rate limit check (cooldown 2 minutes)
     if (
       user.reset_token_expiry &&
       new Date(user.reset_token_expiry) > new Date(Date.now() - 2 * 60 * 1000)
@@ -310,7 +284,6 @@ exports.forgotPassword = async (req, res) => {
       return response(res, 429, false, "Please wait before requesting again");
     }
 
-    // Generate token
     const plainToken = crypto.randomBytes(32).toString("hex");
 
     const hashedToken = crypto
@@ -384,7 +357,6 @@ exports.resetPassword = async (req, res) => {
       return response(res, 400, false, "Passwords do not match");
     }
 
-    // 🔒 Strong password validation (same as register)
     if (!strongPasswordRegex.test(newPassword)) {
       return response(
         res,
@@ -438,7 +410,6 @@ exports.uploadProfileImage = async (req, res) => {
 
     const imageUrl = req.file.location;
 
-    // get old image
     const [[user]] = await db.query(
       "SELECT profile_image FROM users WHERE id = ?",
       [req.user.id],
@@ -451,7 +422,6 @@ exports.uploadProfileImage = async (req, res) => {
       });
     }
 
-    // update DB
     await db.query("UPDATE users SET profile_image = ? WHERE id = ?", [
       imageUrl,
       req.user.id,
@@ -517,10 +487,8 @@ exports.deleteProfileImage = async (req, res) => {
 
     const imageUrl = user.profile_image;
 
-    // 🔥 Extract key from URL
     const key = imageUrl.split(".amazonaws.com/")[1];
 
-    // 🔥 Delete from S3
     await s3.send(
       new DeleteObjectCommand({
         Bucket: "yodoctor.in",
@@ -528,7 +496,6 @@ exports.deleteProfileImage = async (req, res) => {
       }),
     );
 
-    // remove from DB
     await db.query("UPDATE users SET profile_image = NULL WHERE id = ?", [
       req.user.id,
     ]);
@@ -558,8 +525,6 @@ exports.googleLogin = async (req, res) => {
         message: "Firebase token is required",
       });
     }
-
-    // Verify Firebase Token
     const decodedToken = await getAuth().verifyIdToken(token);
     const email = decodedToken.email;
     const fullName = decodedToken.name || "";
@@ -584,7 +549,6 @@ exports.googleLogin = async (req, res) => {
     if (users.length > 0) {
       user = users[0];
 
-      // Doctor should login from doctor portal
       if (portal === "USER" && user.role?.trim().toUpperCase() === "DOCTOR") {
         await connection.rollback();
 
@@ -610,7 +574,6 @@ exports.googleLogin = async (req, res) => {
         [user.id],
       );
 
-      // Check patient profile exists
       if (user.role === "PATIENT") {
         const [patient] = await connection.query(
           `SELECT id
@@ -633,7 +596,6 @@ exports.googleLogin = async (req, res) => {
         }
       }
     } else {
-      // First Google Login
 
       const randomPassword = crypto.randomBytes(32).toString("hex");
 
@@ -661,7 +623,6 @@ exports.googleLogin = async (req, res) => {
         role: "PATIENT",
       };
 
-      // Create Patient Profile
       await connection.query(
         `INSERT INTO patients
         (
@@ -724,8 +685,6 @@ exports.deleteAccount = async (req, res) => {
 
   try {
     const userId = req.user.id;
-
-    // User details
     const [[user]] = await db.query(
       `SELECT id, password, role, is_deleted
        FROM users
@@ -740,7 +699,6 @@ exports.deleteAccount = async (req, res) => {
       });
     }
 
-    // Sirf Patient account delete kar sakta hai
     if (user.role.trim().toUpperCase() !== "PATIENT") {
       return res.status(403).json({
         success: false,
@@ -748,7 +706,6 @@ exports.deleteAccount = async (req, res) => {
       });
     }
 
-    // Agar pehle se deleted hai
     if (user.is_deleted === 1) {
       return res.status(400).json({
         success: false,
@@ -756,7 +713,6 @@ exports.deleteAccount = async (req, res) => {
       });
     }
 
-    // Password verify
     const match = await bcrypt.compare(password, user.password);
 
     if (!match) {
@@ -766,7 +722,6 @@ exports.deleteAccount = async (req, res) => {
       });
     }
 
-    // Soft Delete
     await db.query(
       `UPDATE users
        SET is_deleted = 1,

@@ -28,8 +28,6 @@ exports.createStep1 = async (req, res) => {
 
     const errors = {};
 
-    /* ========= VALIDATIONS ========= */
-
     if (!fullName?.trim()) errors.fullName = "Full name is required";
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -49,8 +47,6 @@ exports.createStep1 = async (req, res) => {
       return res.status(400).json({ errors });
     }
 
-    /* ========= CHECK EXISTING USER ========= */
-
     const [existingUsers] = await connection.query(
       `SELECT u.id, u.password, d.status, d.current_step
        FROM users u
@@ -61,8 +57,6 @@ exports.createStep1 = async (req, res) => {
 
     if (existingUsers.length > 0) {
       const existing = existingUsers[0];
-
-      // If IN_PROGRESS → allow resume
       if (existing.status === "IN_PROGRESS") {
         const isMatch = await bcrypt.compare(password, existing.password);
 
@@ -72,8 +66,6 @@ exports.createStep1 = async (req, res) => {
             message: "Incorrect password.",
           });
         }
-
-        // ✅ TOKEN GENERATE HERE
         const token = jwt.sign(
           { id: existing.id, role: "DOCTOR" },
           process.env.JWT_SECRET,
@@ -104,8 +96,6 @@ exports.createStep1 = async (req, res) => {
         });
       }
     }
-
-    /* ========= CREATE NEW ACCOUNT ========= */
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -176,7 +166,6 @@ exports.updateStep1 = async (req, res) => {
       return res.status(404).json({ message: "Doctor not found" });
     }
 
-    // Allow editing only if registration not submitted
     if (doctor.status !== "IN_PROGRESS") {
       await connection.rollback();
       return res.status(403).json({
@@ -240,7 +229,6 @@ exports.registerStep2 = async (req, res) => {
       });
     }
 
-    // ✅ SAFE DATE FORMATTER
     const formatDate = (date) => {
       if (!date) return null;
       const d = new Date(date);
@@ -274,7 +262,6 @@ exports.registerStep2 = async (req, res) => {
 
     if (!validTill) errors.validTill = "Expiry date required";
 
-    // ✅ FORMAT + VALIDATE DATE (CRITICAL FIX)
     const formattedDate = formatDate(validTill);
 
     if (!formattedDate) {
@@ -311,7 +298,7 @@ exports.registerStep2 = async (req, res) => {
         Number(experience),
         regNumber.trim(),
         stateCouncil.trim(),
-        formattedDate, // ✅ SAFE
+        formattedDate, 
         userId,
       ],
     );
@@ -325,12 +312,11 @@ exports.registerStep2 = async (req, res) => {
   } catch (error) {
     await connection.rollback();
 
-    // ✅ PRODUCTION LOGGING
     console.error("STEP2 ERROR:", error);
 
     return res.status(500).json({
       message: "Server error",
-      error: error.message, // helpful for debugging
+      error: error.message, 
     });
   } finally {
     connection.release();
@@ -376,12 +362,10 @@ exports.registerStep3 = async (req, res) => {
 
     const doctorId = doctor.id;
 
-    // ✅ delete old
     await connection.query(`DELETE FROM doctor_clinics WHERE doctor_id = ?`, [
       doctorId,
     ]);
 
-    // ✅ BULK INSERT 🔥
     const values = clinic.map((c) => [
       doctorId,
       (c.clinicName || "").trim(),
@@ -401,7 +385,6 @@ exports.registerStep3 = async (req, res) => {
       [values],
     );
 
-    // ✅ update step
     await connection.query(
       `UPDATE doctors
        SET current_step = GREATEST(current_step, 3)
@@ -489,7 +472,6 @@ exports.registerStep5 = async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // ✅ doctor fetch
     const [[doctor]] = await connection.query(
       `SELECT id, status, current_step FROM doctors WHERE user_id = ?`,
       [userId],
@@ -526,7 +508,6 @@ exports.registerStep5 = async (req, res) => {
 
     const errors = {};
 
-    // ✅ validations
     if (!fee || isNaN(fee) || Number(fee) <= 0)
       errors.fee = "Valid consultation fee required";
 
@@ -545,7 +526,6 @@ exports.registerStep5 = async (req, res) => {
       return res.status(400).json({ errors });
     }
 
-    // ✅ VALID + UNIQUE DAYS 🔥
     const validDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
     const normalizedDays = [
@@ -557,7 +537,6 @@ exports.registerStep5 = async (req, res) => {
       return res.status(400).json({ message: "Invalid days selected" });
     }
 
-    // ✅ update doctor
     await connection.query(
       `UPDATE doctors 
        SET consultationFee = ?, 
@@ -570,22 +549,19 @@ exports.registerStep5 = async (req, res) => {
 
     const doctorId = doctor.id;
 
-    // ✅ clear old safely
     await connection.query(
       `DELETE FROM doctor_availability WHERE doctor_id = ?`,
       [doctorId],
     );
 
-    // ✅ time format
     const formatTime = (h) => {
       if (h === null || h === undefined || h === "") return null;
       return `${String(h).padStart(2, "0")}:00:00`;
     };
 
-    // ✅ BULK INSERT (SAFE) 🔥
     const values = normalizedDays.map((day) => [
       doctorId,
-      day, // ✅ DIRECT STRING
+      day, 
       morningEnabled ? formatTime(morningStart) : null,
       morningEnabled ? formatTime(morningEnd) : null,
       eveningEnabled ? formatTime(eveningStart) : null,
@@ -663,18 +639,11 @@ exports.registerStep6 = async (req, res) => {
     for (const [docType, files] of Object.entries(req.files)) {
       const file = files[0];
 
-      // ✅ Safety check
       if (!file || !file.location) {
         throw new Error(`S3 upload failed for ${docType}`);
       }
 
       const filePath = file.location;
-
-      //       const filePath = file.location.replace(
-      //   "https://yodoctor.in.s3.ap-south-1.amazonaws.com",
-      //   "https://s3.ap-south-1.amazonaws.com/yodoctor.in"
-      // );
-
       await connection.query(
         `INSERT INTO doctor_documents
      (doctor_id, doc_type, file_path, verified)
@@ -764,8 +733,6 @@ exports.finalSubmitRegistration = async (req, res) => {
       [userId],
     );
 
-    // ✅ FIXED: was using `fullName` (undefined variable) → ReferenceError crash.
-    // Now fetches doctorName from DB using the available userId.
     const [[doctorRow]] = await connection.query(
       `SELECT doctorName FROM doctors WHERE user_id = ?`,
       [userId],
@@ -790,7 +757,7 @@ eventBus.emit(EVENTS.DOCTOR_REGISTRATION_SUBMITTED, {
   }
 };
 
-// doctor  respondAppointment------------------------------
+// doctor  respondAppointment
 
 exports.respondAppointment = async (req, res) => {
   const userId = req.user.id;
@@ -808,7 +775,6 @@ exports.respondAppointment = async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // ✅ FIX: get correct doctorId
     const [[doc]] = await connection.query(
       "SELECT id FROM doctors WHERE user_id = ?",
       [userId],
@@ -821,7 +787,6 @@ exports.respondAppointment = async (req, res) => {
 
     const doctorId = doc.id;
 
-    // ✅ Now correct query
     const [[appointment]] = await connection.query(
       `SELECT a.patient_id,
           a.appointment_date,
@@ -842,7 +807,6 @@ exports.respondAppointment = async (req, res) => {
       });
     }
 
-    // ✅ Date validation
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -856,7 +820,6 @@ exports.respondAppointment = async (req, res) => {
       });
     }
 
-    // ✅ Update status
     await connection.query(
       `UPDATE appointments
        SET status = ?
@@ -904,7 +867,6 @@ exports.respondAppointment = async (req, res) => {
   }
 };
 
-
 exports.getDashboard = async (req, res) => {
   const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
     req.user.id,
@@ -941,7 +903,13 @@ exports.getDashboard = async (req, res) => {
     const [stats] = await db.query(
       `
       SELECT
-        COUNT(CASE WHEN status='PENDING' THEN 1 END) AS pendingRequests,
+        COUNT(
+  CASE
+    WHEN status = 'PENDING'
+     AND appointment_date = CURDATE()
+    THEN 1
+  END
+) AS pendingRequests,
 
         COUNT(
           CASE
@@ -1011,7 +979,6 @@ exports.getIncomingAppointments = async (req, res) => {
   const userId = req.user.id;
 
   try {
-    // ✅ FIX
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
@@ -1057,7 +1024,8 @@ exports.getIncomingAppointments = async (req, res) => {
   }
 };
 
-// doctor  getTodayQueue------------------------------
+// doctor  getTodayQueue
+
 exports.getTodayQueue = async (req, res) => {
   const userId = req.user.id;
   const slot = req.query.slot;
@@ -1067,7 +1035,6 @@ exports.getTodayQueue = async (req, res) => {
   }
 
   try {
-    // ✅ STEP 1: get correct doctorId
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
@@ -1078,7 +1045,6 @@ exports.getTodayQueue = async (req, res) => {
 
     const doctorId = doc.id;
 
-    // ✅ STEP 2: fetch queue
     const [queue] = await db.query(
       `SELECT
         a.id,
@@ -1120,9 +1086,9 @@ exports.getTodayQueue = async (req, res) => {
   }
 };
 
-// ===============================
+
 // START APPOINTMENT
-// ===============================
+
 exports.startAppointment = async (req, res) => {
   const userId = req.user.id;
   const { id: appointmentId } = req.params;
@@ -1133,7 +1099,6 @@ exports.startAppointment = async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // ✅ STEP 1: get doctorId
     const [[doc]] = await connection.query(
       "SELECT id FROM doctors WHERE user_id = ?",
       [userId],
@@ -1145,11 +1110,6 @@ exports.startAppointment = async (req, res) => {
     }
 
     const doctorId = doc.id;
-
-    // ===============================
-    // ✅ TIME VALIDATION (ONLY START)
-    // ===============================
-
     const daysMap = {
       0: "Sun",
       1: "Mon",
@@ -1200,7 +1160,6 @@ exports.startAppointment = async (req, res) => {
       startTime = getTodayTime(availability.evening_start);
     }
 
-    // ❌ BEFORE START BLOCK
     if (startTime && now < startTime) {
       await connection.rollback();
       return res.status(400).json({
@@ -1211,11 +1170,9 @@ exports.startAppointment = async (req, res) => {
       });
     }
 
-    // ===============================
     // EXISTING LOGIC
-    // ===============================
 
-    // check already running
+
     const [[existing]] = await connection.query(
       `SELECT id FROM appointments
        WHERE doctor_id = ?
@@ -1233,7 +1190,6 @@ exports.startAppointment = async (req, res) => {
       });
     }
 
-    // check valid appointment
     const [[appointment]] = await connection.query(
       `SELECT id FROM appointments
        WHERE id = ?
@@ -1251,8 +1207,6 @@ exports.startAppointment = async (req, res) => {
         message: "Appointment cannot be started",
       });
     }
-
-    // ✅ START APPOINTMENT
     await connection.query(
       `UPDATE appointments SET status = 'IN_PROGRESS' WHERE id = ?`,
       [appointmentId],
@@ -1269,9 +1223,9 @@ exports.startAppointment = async (req, res) => {
   }
 };
 
-// ===============================
+
 // CALL NEXT TOKEN
-// ===============================
+
 exports.callNextToken = async (req, res) => {
   const userId = req.user.id;
   const { slot } = req.body;
@@ -1281,7 +1235,6 @@ exports.callNextToken = async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // ✅ FIX
     const [[doc]] = await connection.query(
       "SELECT id FROM doctors WHERE user_id = ?",
       [userId],
@@ -1294,7 +1247,6 @@ exports.callNextToken = async (req, res) => {
 
     const doctorId = doc.id;
 
-    // complete current
     const [[current]] = await connection.query(
       `SELECT id FROM appointments
        WHERE doctor_id = ?
@@ -1312,7 +1264,6 @@ exports.callNextToken = async (req, res) => {
       );
     }
 
-    // get next
     const [[next]] = await connection.query(
       `SELECT id, token_number FROM appointments
        WHERE doctor_id = ?
@@ -1349,9 +1300,9 @@ exports.callNextToken = async (req, res) => {
   }
 };
 
-// ===============================
+
 // GET CURRENT APPOINTMENT
-// ===============================
+
 exports.getCurrentAppointment = async (req, res) => {
   const userId = req.user.id;
   const { slot } = req.query;
@@ -1361,7 +1312,6 @@ exports.getCurrentAppointment = async (req, res) => {
   }
 
   try {
-    // ✅ FIX
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
@@ -1411,10 +1361,9 @@ exports.getCurrentAppointment = async (req, res) => {
   }
 };
 
-// ===============================
 
 // GET NEXT APPOINTMENT
-// ===============================
+
 exports.getNextAppointment = async (req, res) => {
   const userId = req.user.id;
   const { slot } = req.query;
@@ -1424,7 +1373,6 @@ exports.getNextAppointment = async (req, res) => {
   }
 
   try {
-    // ✅ FIX
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
@@ -1520,13 +1468,12 @@ exports.updateClinicStatus = async (req, res) => {
 };
 
 exports.getDoctorReviews = async (req, res) => {
-  const userId = req.user.id; // 🔥 this is users.id
+  const userId = req.user.id; 
   const page = Number(req.query.page) || 1;
   const limit = 10;
   const offset = (page - 1) * limit;
 
   try {
-    // ✅ STEP 1: get correct doctor.id
     const [[doctor]] = await db.query(
       `SELECT id FROM doctors WHERE user_id = ?`,
       [userId],
@@ -1540,7 +1487,6 @@ exports.getDoctorReviews = async (req, res) => {
 
     const doctorId = doctor.id;
 
-    // ✅ STEP 2: total count
     const [[{ total }]] = await db.query(
       `SELECT COUNT(*) AS total
        FROM doctor_feedback
@@ -1548,7 +1494,6 @@ exports.getDoctorReviews = async (req, res) => {
       [doctorId],
     );
 
-    // ✅ STEP 3: fetch reviews (🔥 added r.id)
     const [reviews] = await db.query(
       `SELECT
     r.id,
@@ -1579,7 +1524,6 @@ exports.getDoctorReviews = async (req, res) => {
       [doctorId],
     );
 
-    // ✅ STEP 4: response (🔥 added hasMore)
     res.json({
       reviews,
       page,
@@ -1616,7 +1560,6 @@ exports.addVisitSummary = async (req, res) => {
   await connection.beginTransaction();
 
   try {
-    // 1️⃣ Validate appointment (must belong to doctor & completed)
     const [[appt]] = await connection.query(
       `SELECT id
        FROM appointments
@@ -1633,7 +1576,6 @@ exports.addVisitSummary = async (req, res) => {
       });
     }
 
-    // 2️⃣ Get patient
     const [[patientLink]] = await connection.query(
       `SELECT patient_id
        FROM appointment_patients
@@ -1652,7 +1594,6 @@ exports.addVisitSummary = async (req, res) => {
 
     const patientId = patientLink.patient_id;
 
-    // 3️⃣ Validate follow-up days
     let followUpDate = null;
     const days = parseInt(followUpAfterDays, 10);
     if (!isNaN(days) && days > 0) {
@@ -1660,7 +1601,6 @@ exports.addVisitSummary = async (req, res) => {
       followUpDate.setDate(followUpDate.getDate() + days);
     }
 
-    // 4️⃣ Insert or update summary
     const [[existing]] = await connection.query(
       `SELECT id FROM visit_summaries WHERE appointment_id = ?`,
       [appointmentId],
@@ -1687,8 +1627,6 @@ exports.addVisitSummary = async (req, res) => {
         ],
       );
     }
-
-    // 5️⃣ Optional Notification
     await createNotification({
       receiverId: patientId,
       receiverRole: "PATIENT",
@@ -1757,7 +1695,6 @@ exports.getDoctorAppointmentHistory = async (req, res) => {
   const offset = (page - 1) * limit;
 
   try {
-    // ✅ FIX: get correct doctorId
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
@@ -1778,7 +1715,6 @@ exports.getDoctorAppointmentHistory = async (req, res) => {
         "AND a.appointment_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND CURDATE()";
     }
 
-    // ✅ COUNT
     const [[{ total }]] = await db.query(
       `SELECT COUNT(DISTINCT a.id) AS total
        FROM appointments a
@@ -1788,7 +1724,6 @@ exports.getDoctorAppointmentHistory = async (req, res) => {
       params,
     );
 
-    // ✅ DATA
     const [appointments] = await db.query(
       `SELECT
         a.id,
@@ -1847,13 +1782,13 @@ exports.getDoctorAppointmentHistory = async (req, res) => {
 };
 
 // DOCTOR – downloadQR
+
 exports.downloadQR = async (req, res) => {
   const path = require("path");
   const fs = require("fs");
 
   let browser;
 
-  // ✅ SAFE LOGO LOAD
   let logo;
   try {
     const logoPath = path.join(process.cwd(), "src/assets/logo.webp");
@@ -1868,14 +1803,12 @@ exports.downloadQR = async (req, res) => {
     const userId = req.user.id;
     const { doctorName, specialization, qrValue } = req.body;
 
-    // ✅ GET DOCTOR ID
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
 
     const doctorId = doc.id;
 
-    // ✅ GET CLINIC NAME
     const [clinicRows] = await db.query(
       `SELECT clinic_name 
    FROM doctor_clinics 
@@ -1887,7 +1820,6 @@ exports.downloadQR = async (req, res) => {
 
     const clinicName = clinicRows[0]?.clinic_name || "YoDoctor Clinic";
 
-    // ✅ DB IMAGE
     const [[user]] = await db.query(
       "SELECT profile_image FROM users WHERE id = ?",
       [userId],
@@ -1895,10 +1827,9 @@ exports.downloadQR = async (req, res) => {
 
     let doctorImage = user?.profile_image || "https://via.placeholder.com/60";
 
-    // ✅ QR
+
     const qrImage = await QRCode.toDataURL(qrValue);
 
-    // ✅ HTML
     const html = generateQRHTML({
       doctorName,
       specialization,
@@ -1938,7 +1869,6 @@ exports.downloadQR = async (req, res) => {
   }
 };
 
-
 // DOCTOR – getMyQRRedirect
 
 exports.getMyQRRedirect = async (req, res) => {
@@ -1964,7 +1894,7 @@ exports.getMyQRRedirect = async (req, res) => {
       return res.status(403).send("Doctor not approved");
     }
 
-    // ✅ Optional tracking
+``
     await db.query(
       `INSERT INTO qr_scans (doctor_id, scanned_at) VALUES (?, NOW())`,
       [doctorId],
@@ -2073,10 +2003,6 @@ exports.manualVisitBooking = async (req, res) => {
     const appointmentDate = getTodayDate();
 
     const MAX_TOKENS_PER_SHIFT = 50;
-
-    // -------------------------
-    // 1️⃣ Doctor check (FIXED)
-    // -------------------------
     const [[doctor]] = await connection.query(
       `SELECT id
        FROM doctors
@@ -2091,9 +2017,6 @@ exports.manualVisitBooking = async (req, res) => {
       throw new Error("Doctor is not available for booking");
     }
 
-    // -------------------------
-    // 2️⃣ Availability
-    // -------------------------
     const daysMap = {
       0: "Sun",
       1: "Mon",
@@ -2140,10 +2063,6 @@ exports.manualVisitBooking = async (req, res) => {
 
     const now = new Date();
     const currentHHMM = now.getHours() * 60 + now.getMinutes();
-
-    // -------------------------
-    // Slot validation
-    // -------------------------
     if (slot === "MORNING" && (!morningStart || !morningEnd)) {
       throw new Error("Doctor not available in morning");
     }
@@ -2152,9 +2071,6 @@ exports.manualVisitBooking = async (req, res) => {
       throw new Error("Doctor not available in evening");
     }
 
-    // -------------------------
-    // Cutoff
-    // -------------------------
     if (slot === "MORNING") {
       if (currentHHMM >= morningEnd - 10) {
         throw new Error("Morning booking closed");
@@ -2167,9 +2083,6 @@ exports.manualVisitBooking = async (req, res) => {
       }
     }
 
-    // -------------------------
-    // Token check
-    // -------------------------
     const [[row]] = await connection.query(
       `SELECT COUNT(*) AS totalTokens,
               MAX(token_number) AS lastToken
@@ -2187,9 +2100,6 @@ exports.manualVisitBooking = async (req, res) => {
 
     const nextToken = (row.lastToken || 0) + 1;
 
-    // -------------------------
-    // Insert walk-in
-    // -------------------------
     const [walkinResult] = await connection.query(
       `INSERT INTO walkin_patients (name, mobile, age)
        VALUES (?, ?, ?)`,
@@ -2197,10 +2107,6 @@ exports.manualVisitBooking = async (req, res) => {
     );
 
     const walkinPatientId = walkinResult.insertId;
-
-    // -------------------------
-    // Insert appointment
-    // -------------------------
     const [appointmentResult] = await connection.query(
       `INSERT INTO appointments
        (appointment_type, doctor_id, walkin_patient_id,
@@ -2243,7 +2149,6 @@ exports.addPrescription = async (req, res) => {
   const { medicines, instructions } = req.body;
 
   try {
-    // ✅ FIX: get correct doctorId
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
@@ -2253,8 +2158,6 @@ exports.addPrescription = async (req, res) => {
     }
 
     const doctorId = doc.id;
-
-    // 1️⃣ Validate appointment (SECURE)
     const [[appt]] = await db.query(
       `SELECT id, patient_id, family_member_id
        FROM appointments
@@ -2278,7 +2181,6 @@ exports.addPrescription = async (req, res) => {
       });
     }
 
-    // 2️⃣ Check existing summary
     const [[existing]] = await db.query(
       `SELECT id FROM visit_summaries WHERE appointment_id = ?`,
       [appointmentId],
@@ -2318,7 +2220,6 @@ exports.getPrescription = async (req, res) => {
   const { id: appointmentId } = req.params;
 
   try {
-    // ✅ doctor check (optional but safe)
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
@@ -2360,7 +2261,6 @@ exports.autoAcceptAllAppointments = async (req, res) => {
   const userId = req.user.id;
 
   try {
-    // ✅ FIX: correct doctorId
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
@@ -2441,7 +2341,6 @@ exports.recallSkippedPatient = async (req, res) => {
   const { id } = req.params;
 
   try {
-    // ✅ FIX
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
@@ -2485,8 +2384,6 @@ exports.markNoShow = async (req, res) => {
 
   try {
     await connection.beginTransaction();
-
-    // ✅ FIX
     const [[doc]] = await connection.query(
       "SELECT id FROM doctors WHERE user_id = ?",
       [userId],
@@ -2613,8 +2510,6 @@ exports.cancelRemainingAppointments = async (req, res) => {
 
   try {
     await connection.beginTransaction();
-
-    // ✅ FIX: get correct doctorId
     const [[doc]] = await connection.query(
       "SELECT id FROM doctors WHERE user_id = ?",
       [userId],
@@ -2626,8 +2521,6 @@ exports.cancelRemainingAppointments = async (req, res) => {
     }
 
     const doctorId = doc.id;
-
-    // 1️⃣ Fetch affected patients
     const [appointments] = await connection.query(
       `SELECT 
         a.id,
@@ -2650,7 +2543,6 @@ exports.cancelRemainingAppointments = async (req, res) => {
       return res.json({ message: "No remaining appointments found" });
     }
 
-    // 2️⃣ Update appointments
     await connection.query(
       `UPDATE appointments
        SET status = 'CANCELLED',
@@ -2665,8 +2557,6 @@ exports.cancelRemainingAppointments = async (req, res) => {
     );
 
     await connection.commit();
-
-    // 3️⃣ Notifications
     for (const appt of appointments) {
       if (appt.email) {
         await sendEmail({
@@ -2706,7 +2596,6 @@ exports.cancelRemainingAppointments = async (req, res) => {
   }
 };
 
-// update doctor profile
 const formatDate = (date) => {
   try {
     if (!date) return null;
@@ -2749,8 +2638,6 @@ exports.updateDoctorProfile = async (req, res) => {
 
   try {
     await connection.beginTransaction();
-
-    /* ✅ STEP 1: doctorId */
     const [[doc]] = await connection.query(
       `SELECT id FROM doctors WHERE user_id = ?`,
       [userId],
@@ -2762,8 +2649,6 @@ exports.updateDoctorProfile = async (req, res) => {
     }
 
     const doctorId = doc.id;
-
-    /* ================= DOCTOR TABLE ================= */
     const doctorFields = [];
     const doctorValues = [];
 
@@ -2839,15 +2724,12 @@ exports.updateDoctorProfile = async (req, res) => {
         doctorValues,
       );
     }
-
-    // ✅ Normalize input (only valid values)
     const validDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
     const selectedDays = (availableDays || []).filter((d) =>
       validDays.includes(d),
     );
 
-    // ❗ If no days → delete all
     if (availableDays !== undefined) {
       if (selectedDays.length === 0) {
         await connection.query(
@@ -2855,14 +2737,12 @@ exports.updateDoctorProfile = async (req, res) => {
           [doctorId],
         );
       } else {
-        // 1️⃣ DELETE unwanted days
         await connection.query(
           `DELETE FROM doctor_availability 
        WHERE doctor_id = ? AND day_code NOT IN (${selectedDays.map(() => "?").join(",")})`,
           [doctorId, ...selectedDays],
         );
 
-        // 2️⃣ INSERT missing days (bulk safe)
         const values = [];
 
         for (const day of selectedDays) {
@@ -2884,8 +2764,6 @@ exports.updateDoctorProfile = async (req, res) => {
         );
       }
     }
-
-    /* ================= USERS TABLE ================= */
 
     if (mobile !== undefined) {
       const [[current]] = await connection.query(
@@ -2912,8 +2790,6 @@ exports.updateDoctorProfile = async (req, res) => {
         ]);
       }
     }
-
-    /* ================= CLINIC TABLE ================= */
 
     const [[clinic]] = await connection.query(
       `SELECT id FROM doctor_clinics WHERE doctor_id = ? LIMIT 1`,
@@ -3011,7 +2887,6 @@ exports.getDoctorProfile = async (req, res) => {
   const userId = req.user.id;
 
   try {
-    /* ✅ STEP 1: Get doctor.id */
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
@@ -3021,8 +2896,6 @@ exports.getDoctorProfile = async (req, res) => {
     }
 
     const doctorId = doc.id;
-
-    /* ✅ STEP 2: Main profile query (WITHOUT clinic JOIN) */
     const [[doctor]] = await db.query(
       `SELECT 
         d.id,
@@ -3088,7 +2961,6 @@ exports.getDoctorProfile = async (req, res) => {
       return res.status(404).json({ message: "Doctor profile not found" });
     }
 
-    /* ── JSON parse ── */
     if (doctor.availableDays && typeof doctor.availableDays === "string") {
       try {
         doctor.availableDays = JSON.parse(doctor.availableDays);
@@ -3097,7 +2969,6 @@ exports.getDoctorProfile = async (req, res) => {
       }
     }
 
-    /* ✅ FIX 1: Rating number */
     doctor.rating = doctor.rating ? Number(doctor.rating) : 0;
 
     doctor.documents = {
@@ -3105,13 +2976,10 @@ exports.getDoctorProfile = async (req, res) => {
       certificate: doctor.certificate || null,
       id_proof: doctor.id_proof || null,
     };
-    console.log("✅ Final documents object:", doctor.documents);
 
     delete doctor.profile_picture;
     delete doctor.certificate;
     delete doctor.id_proof;
-
-    /* ✅ FIX 2: Clinics as array */
     const [clinics] = await db.query(
       `SELECT clinic_name, address, city, state, pincode, landmark, maps_link, languages
        FROM doctor_clinics
@@ -3119,7 +2987,6 @@ exports.getDoctorProfile = async (req, res) => {
       [doctorId],
     );
 
-    // parse languages JSON
     doctor.clinic =
       clinics.length > 0
         ? {
@@ -3137,8 +3004,6 @@ exports.getDoctorProfile = async (req, res) => {
           }
         : null;
 
-    /* ✅ FIX 3: Availability + day mapping (FINAL CLEAN) */
-
     const [availability] = await db.query(
       `SELECT day_code, morning_start, morning_end, evening_start, evening_end
    FROM doctor_availability
@@ -3146,7 +3011,6 @@ exports.getDoctorProfile = async (req, res) => {
       [doctorId],
     );
 
-    // ✅ Normalize + remove invalid rows
     const validDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
     doctor.availability = availability
@@ -3156,7 +3020,7 @@ exports.getDoctorProfile = async (req, res) => {
         day: a.day_code,
       }));
 
-    // ✅ Only send selected days
+  
     doctor.availableDays = doctor.availability.map((a) => a.day);
 
     res.json({ doctor });

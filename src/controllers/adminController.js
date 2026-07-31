@@ -4,10 +4,6 @@ const jwt = require("jsonwebtoken");
 const eventBus = require("../events/eventBus");
 const EVENTS = require("../events/notification.events");
 
-
-// GET /admin/dashboard
-// ✅ FIXED: added try/catch — was crashing silently on any DB error
-
 exports.getDashboard = async (req, res) => {
   try {
     const [[doctors]] = await db.query(
@@ -170,7 +166,6 @@ exports.getDoctorDetails = async (req, res) => {
   const doctorId = req.params.id;
 
   try {
-    // ✅ 1. DOCTOR + USER
     const [[doctor]] = await db.query(
       `SELECT
         d.id,
@@ -204,7 +199,6 @@ exports.getDoctorDetails = async (req, res) => {
       return res.status(404).json({ message: "Doctor not found" });
     }
 
-    // ✅ 2. PARSE availableDays
     if (doctor.availableDays) {
       try {
         doctor.availableDays = JSON.parse(doctor.availableDays);
@@ -217,7 +211,6 @@ exports.getDoctorDetails = async (req, res) => {
       doctor.availableDays = [];
     }
 
-    // ✅ 3. CLINICS (MULTIPLE SUPPORT 🔥)
     const [clinicRows] = await db.query(
       `SELECT 
         id AS clinic_id,
@@ -247,7 +240,6 @@ exports.getDoctorDetails = async (req, res) => {
         typeof c.languages === "string" ? JSON.parse(c.languages) : c.languages,
     }));
 
-    // ✅ 4. AVAILABILITY
     const [availabilityRows] = await db.query(
       `SELECT 
         day_code,
@@ -278,8 +270,6 @@ exports.getDoctorDetails = async (req, res) => {
       evening_start: a.evening_start,
       evening_end: a.evening_end,
     }));
-
-    // ✅ 5. SHIFT CALCULATION
     const shift = {
       morning_start:
         availabilityRows.length > 0
@@ -316,7 +306,6 @@ exports.getDoctorDetails = async (req, res) => {
           : null,
     };
 
-    // ✅ 6. DOCUMENTS
     const [docs] = await db.query(
       `SELECT doc_type, file_path 
    FROM doctor_documents 
@@ -347,7 +336,6 @@ exports.getDoctorDetails = async (req, res) => {
       }
     });
 
-    //  7. FINAL RESPONSE
     return res.json({
       doctor: {
         id: doctor.id,
@@ -388,11 +376,10 @@ exports.getDoctorDetails = async (req, res) => {
 
 // verifyDoctorDocument
 exports.verifyDoctorDocument = async (req, res) => {
-  const doctorId = req.params.id; // ✅ doctor.id
+  const doctorId = req.params.id;
   const { docType, verified, reason } = req.body;
 
   try {
-    // ✅ 1. Validate input
     if (!docType) {
       return res.status(400).json({ message: "docType is required" });
     }
@@ -403,7 +390,6 @@ exports.verifyDoctorDocument = async (req, res) => {
       });
     }
 
-    // ✅ 2. Check doctor exists
     const [[doctor]] = await db.query(`SELECT id FROM doctors WHERE id = ?`, [
       doctorId,
     ]);
@@ -412,7 +398,6 @@ exports.verifyDoctorDocument = async (req, res) => {
       return res.status(404).json({ message: "Doctor not found" });
     }
 
-    // ✅ 3. Check document exists
     const [[doc]] = await db.query(
       `SELECT id FROM doctor_documents 
        WHERE doctor_id = ? AND doc_type = ?`,
@@ -423,24 +408,19 @@ exports.verifyDoctorDocument = async (req, res) => {
       return res.status(404).json({ message: "Document not found" });
     }
 
-    // ✅ 4. Set verified value
-    // 0 = pending, 1 = approved, 2 = rejected
     const verifiedValue = verified ? 1 : 2;
 
-    // ✅ 5. Update document
     await db.query(
       `UPDATE doctor_documents
        SET verified = ?, rejection_reason = ?
        WHERE doctor_id = ? AND doc_type = ?`,
       [
         verifiedValue,
-        verifiedValue === 2 ? reason : null, // ✅ correct logic
+        verifiedValue === 2 ? reason : null, 
         doctorId,
         docType,
       ],
     );
-
-    // ✅ 6. Success response
     return res.json({
       success: true,
       message:
@@ -601,10 +581,6 @@ exports.toggleDoctorActive = async (req, res) => {
   }
 };
 
-
-
-// getPatients
-// ✅ FIXED: added try/catch
 exports.getPatients = async (req, res) => {
   try {
     const [patients] = await db.query(`
@@ -638,8 +614,6 @@ exports.getPatients = async (req, res) => {
   }
 };
 
-// blockUser
-// ✅ FIXED: added try/catch
 exports.blockUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -663,8 +637,6 @@ exports.blockUser = async (req, res) => {
   }
 };
 
-// unblockUser
-// ✅ FIXED: added try/catch
 exports.unblockUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -688,8 +660,6 @@ exports.unblockUser = async (req, res) => {
   }
 };
 
-// getAllAppointments
-// ✅ FIXED: appointment_shift → appointment_slot + added try/catch
 exports.getAllAppointments = async (req, res) => {
   try {
     const { doctorId, date, status } = req.query;
@@ -743,8 +713,7 @@ exports.getAllAppointments = async (req, res) => {
   }
 };
 
-// forceCancelAppointment
-// ✅ FIXED: added try/catch
+
 exports.forceCancelAppointment = async (req, res) => {
   try {
     const appointmentId = req.params.id;
@@ -772,8 +741,6 @@ exports.forceCancelAppointment = async (req, res) => {
   }
 };
 
-// getAdminAnalytics
-// ✅ FIXED: status='verified' → status='APPROVED' + added try/catch
 exports.getAdminAnalytics = async (req, res) => {
   try {
     const [[data]] = await db.query(`
@@ -801,7 +768,6 @@ exports.getAllContactRequests = async (req, res) => {
     let countQuery = `SELECT COUNT(*) as total FROM contact_requests`;
     let values = [];
 
-    // ✅ filter by status (optional)
     if (status) {
       query += ` WHERE status = ?`;
       countQuery += ` WHERE status = ?`;
@@ -811,7 +777,6 @@ exports.getAllContactRequests = async (req, res) => {
     query += ` ORDER BY id ASC LIMIT ? OFFSET ?`;
     values.push(Number(limit), Number(offset));
 
-    // ✅ execute queries
     const [rows] = await db.query(query, values);
 
     const [[countResult]] = await db.query(countQuery, status ? [status] : []);
@@ -900,8 +865,6 @@ exports.addLabTest = async (req, res) => {
       is_popular,
       includes = [],
     } = req.body;
-
-    // Uploaded image path
 
     const image = `/uploads/lab-tests/${req.file.filename}`;
 
@@ -1065,7 +1028,6 @@ exports.updateLabTest = async (req, res) => {
       includes = [],
     } = req.body;
 
-    // Purani image nikalo
     const [rows] = await db.query("SELECT image FROM lab_tests WHERE id=?", [
       id,
     ]);
@@ -1120,7 +1082,6 @@ exports.updateLabTest = async (req, res) => {
       ],
     );
 
-    // Purane includes delete karo
     await db.query(
       `
       DELETE FROM lab_test_includes
@@ -1129,7 +1090,6 @@ exports.updateLabTest = async (req, res) => {
       [id],
     );
 
-    // Naye includes add karo
     if (includes && includes.length > 0) {
       for (const item of includes) {
         await db.query(
@@ -1182,8 +1142,6 @@ exports.addLabPackage = async (req, res) => {
       report_time,
       fasting,
     } = req.body;
-
-    // Get uploaded image URL/path
 
     const image = `/uploads/lab-tests/${req.file.filename}`;
 
@@ -1363,13 +1321,10 @@ exports.updateLabPackage = async (req, res) => {
       fasting,
     } = req.body;
 
-    // Purani image nikalo
     const [oldPackage] = await conn.query(
       "SELECT image FROM lab_tests WHERE id=?",
       [id],
     );
-
-    // Agar nayi image upload hui hai to use karo, warna purani image rakho
     const image = `/uploads/lab-tests/${req.file.filename}`;
 
     await conn.query(

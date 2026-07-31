@@ -65,10 +65,6 @@ const initializeSocket = (httpServer) => {
   io.on("connection", (socket) => {
     console.log(`[Socket.IO] Connected: ${socket.id}`);
 
-    /*
-     * Temporary room joining method.
-     * Later replace this with JWT-authenticated room joining.
-     */
     socket.on("join-user-room", (userId) => {
       if (!userId) {
         console.warn(`[Socket.IO] Missing userId from socket ${socket.id}`);
@@ -113,8 +109,6 @@ const initializeSocket = (httpServer) => {
       console.error(`[Socket.IO] Error for ${socket.id}:`, error);
     });
   });
-
-  console.log("✅ Socket.IO server initialized with origins:", allowedOrigins);
 
   return io;
 };
