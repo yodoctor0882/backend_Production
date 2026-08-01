@@ -1467,6 +1467,8 @@ exports.updateClinicStatus = async (req, res) => {
   }
 };
 
+// getDoctorReviews
+
 exports.getDoctorReviews = async (req, res) => {
   const userId = req.user.id; 
   const page = Number(req.query.page) || 1;
@@ -1486,34 +1488,58 @@ exports.getDoctorReviews = async (req, res) => {
     }
 
     const doctorId = doctor.id;
-
     const [[{ total }]] = await db.query(
       `SELECT COUNT(*) AS total
        FROM doctor_feedback
        WHERE doctor_id = ?`,
       [doctorId],
     );
+const [reviews] = await db.query(
+  `SELECT
+      r.id,
+      r.rating,
+      r.comment,
+      r.created_at,
 
-    const [reviews] = await db.query(
-      `SELECT
-    r.id,
-    r.rating,
-    r.comment,
-    r.created_at,
+      p.fullName AS patientName,
+      u.profile_image AS patientImage,
 
-    p.fullName AS patientName,   
-    u.profile_image AS patientImage 
+      a.family_member_id AS familyMemberId,
+      fm.full_name AS familyMemberName,
+      fm.relation AS familyMemberRelation,
+
+      CASE
+        WHEN a.family_member_id IS NOT NULL
+          THEN fm.full_name
+        ELSE p.fullName
+      END AS reviewedPatientName,
+
+      CASE
+        WHEN a.family_member_id IS NOT NULL
+          THEN 1
+        ELSE 0
+      END AS isFamilyMember
 
    FROM doctor_feedback r
 
-   JOIN patients p ON r.patient_id = p.id
-   JOIN users u ON p.user_id = u.id
+   JOIN appointments a
+     ON a.id = r.appointment_id
+
+   JOIN users u
+     ON u.id = r.patient_id
+
+   JOIN patients p
+     ON p.user_id = r.patient_id
+
+   LEFT JOIN family_members fm
+     ON fm.id = a.family_member_id
 
    WHERE r.doctor_id = ?
+
    ORDER BY r.created_at DESC
    LIMIT ? OFFSET ?`,
-      [doctorId, limit, offset],
-    );
+  [doctorId, limit, offset],
+);
 
     const [[stats]] = await db.query(
       `SELECT 
@@ -1523,7 +1549,6 @@ exports.getDoctorReviews = async (req, res) => {
       WHERE doctor_id = ?`,
       [doctorId],
     );
-
     res.json({
       reviews,
       page,
