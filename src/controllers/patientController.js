@@ -677,67 +677,92 @@ exports.getDoctorById = async (req, res) => {
   try {
     const [rows] = await db.query(
       `SELECT
-  d.id AS doctorId,
-  d.doctorName,
-  d.specialization,
-  d.degree,
-  d.is_available,
-CASE
-    WHEN today_da.doctor_id IS NOT NULL THEN 1
-    ELSE 0
-END AS available_today,
-  d.degree AS qualification,
-  dc.clinic_name AS clinicName,
-  dc.address,
-  dc.city,
-  d.licenseNumber,
-  d.consultationFee,
-  d.experience_years,
-  d.rating,
-  dc.languages,
-  dc.maps_link,
-  d.bio AS description,
-  d.consultation_duration AS timings,
-(
-  SELECT JSON_OBJECT(
-    'morning',
-      CASE
-        WHEN morning_start IS NOT NULL AND morning_end IS NOT NULL
-        THEN CONCAT(
-          TIME_FORMAT(morning_start,'%h:%i %p'),
-          ' - ',
-          TIME_FORMAT(morning_end,'%h:%i %p')
-        )
-        ELSE ''
-      END,
-    'evening',
-      CASE
-        WHEN evening_start IS NOT NULL AND evening_end IS NOT NULL
-        THEN CONCAT(
-          TIME_FORMAT(evening_start,'%h:%i %p'),
-          ' - ',
-          TIME_FORMAT(evening_end,'%h:%i %p')
-        )
-        ELSE ''
-      END
-  )
-  FROM doctor_availability da
-  WHERE da.doctor_id = d.id
-  LIMIT 1
-) AS sessionTimings,
-  u.profile_image,
-  (
-    SELECT JSON_ARRAYAGG(da.day_code)
-    FROM doctor_availability da
-    WHERE da.doctor_id = d.id
-  ) AS availableDays
-FROM doctors d
-LEFT JOIN users u ON u.id = d.user_id
-LEFT JOIN doctor_clinics dc ON dc.doctor_id = d.id
-LEFT JOIN doctor_availability today_da
-ON today_da.doctor_id = d.id
-AND today_da.day_code = ?
-WHERE d.id = ?`,
+        d.id AS doctorId,
+        d.doctorName,
+        d.specialization,
+        d.degree,
+        d.is_available,
+
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM subscriptions s
+            WHERE s.user_id = d.user_id
+            AND s.status = 'active'
+          )
+          THEN 1
+          ELSE 0
+        END AS hasActiveSubscription,
+
+        CASE
+          WHEN today_da.doctor_id IS NOT NULL THEN 1
+          ELSE 0
+        END AS available_today,
+
+        d.degree AS qualification,
+        dc.clinic_name AS clinicName,
+        dc.address,
+        dc.city,
+        d.licenseNumber,
+        d.consultationFee,
+        d.experience_years,
+        d.rating,
+        dc.languages,
+        dc.maps_link,
+        d.bio AS description,
+        d.consultation_duration AS timings,
+
+        (
+          SELECT JSON_OBJECT(
+            'morning',
+              CASE
+                WHEN morning_start IS NOT NULL
+                AND morning_end IS NOT NULL
+                THEN CONCAT(
+                  TIME_FORMAT(morning_start,'%h:%i %p'),
+                  ' - ',
+                  TIME_FORMAT(morning_end,'%h:%i %p')
+                )
+                ELSE ''
+              END,
+            'evening',
+              CASE
+                WHEN evening_start IS NOT NULL
+                AND evening_end IS NOT NULL
+                THEN CONCAT(
+                  TIME_FORMAT(evening_start,'%h:%i %p'),
+                  ' - ',
+                  TIME_FORMAT(evening_end,'%h:%i %p')
+                )
+                ELSE ''
+              END
+          )
+          FROM doctor_availability da
+          WHERE da.doctor_id = d.id
+          LIMIT 1
+        ) AS sessionTimings,
+
+        u.profile_image,
+
+        (
+          SELECT JSON_ARRAYAGG(da.day_code)
+          FROM doctor_availability da
+          WHERE da.doctor_id = d.id
+        ) AS availableDays
+
+      FROM doctors d
+
+      LEFT JOIN users u
+        ON u.id = d.user_id
+
+      LEFT JOIN doctor_clinics dc
+        ON dc.doctor_id = d.id
+
+      LEFT JOIN doctor_availability today_da
+        ON today_da.doctor_id = d.id
+        AND today_da.day_code = ?
+
+      WHERE d.id = ?`,
       [todayCode, doctorId],
     );
 
@@ -748,13 +773,14 @@ WHERE d.id = ?`,
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       doctor: rows[0],
     });
   } catch (err) {
     console.log(err);
-    res.status(500).json({
+
+    return res.status(500).json({
       success: false,
       message: "Internal server error",
     });
@@ -1454,12 +1480,33 @@ exports.qrBookVisit = async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    const [[doctor]] = await connection.query(
-      `SELECT id FROM doctors WHERE id = ? AND status = 'APPROVED'`,
-      [doctorId],
-    );
+const [[doctor]] = await connection.query(
+  `SELECT id, user_id
+   FROM doctors
+   WHERE id = ?
+   AND status = 'APPROVED'`,
+  [doctorId],
+);
 
-    if (!doctor) throw new Error("Doctor not available");
+if (!doctor) {
+  throw new Error("Doctor not available");
+}
+
+const [[subscription]] = await connection.query(
+  `SELECT id
+   FROM subscriptions
+   WHERE user_id = ?
+   AND status = 'active'
+   ORDER BY current_period_end DESC
+   LIMIT 1`,
+  [doctor.user_id],
+);
+
+if (!subscription) {
+  throw new Error(
+    "This doctor is currently unavailable for appointments",
+  );
+}
 
     const now = new Date();
     const currentHHMM = now.getHours() * 60 + now.getMinutes();
@@ -1508,6 +1555,7 @@ exports.qrBookVisit = async (req, res) => {
     const eveningEnd = toMinutes(avail.evening_end);
 
     let selectedShift = null;
+
     if (
       morningStart !== null &&
       morningEnd !== null &&
@@ -1542,6 +1590,7 @@ exports.qrBookVisit = async (req, res) => {
     if (existing && familyMemberIds.length === 0) {
       throw new Error("You already have active token");
     }
+
     const [[countRow]] = await connection.query(
       `SELECT COUNT(*) AS total
        FROM appointments
@@ -1556,6 +1605,7 @@ exports.qrBookVisit = async (req, res) => {
     if (countRow.total >= MAX_TOKENS) {
       throw new Error(`${selectedShift} shift full`);
     }
+
     const [[row]] = await connection.query(
       `SELECT MAX(token_number) AS lastToken
        FROM appointments
