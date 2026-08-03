@@ -373,16 +373,239 @@ exports.getDocumentsByRequestId = async (req, res) => {
 
 // approveRequest Api
 
-exports.approveRequest = async (req, res) => {
-  const logoPath = path.join(process.cwd(), "src/assets/logo.webp");
-  const logoBase64 = fs.readFileSync(logoPath, { encoding: "base64" });
-  const logo = `data:image/webp;base64,${logoBase64}`;
+// exports.approveRequest = async (req, res) => {
+//   const logoPath = path.join(process.cwd(), "src/assets/logo.webp");
+//   const logoBase64 = fs.readFileSync(logoPath, { encoding: "base64" });
+//   const logo = `data:image/webp;base64,${logoBase64}`;
 
+//   try {
+//     const { id } = req.params;
+//     const doctorUserId = req.user.id;
+//     const { doctor_notes, fitness_status, validity } = req.body;
+
+//     const [doctorRows] = await db.query(
+//       `SELECT
+//     d.id,
+//       d.doctorName,
+//       u.profile_image
+//    FROM doctors d
+//    JOIN users u ON d.user_id = u.id
+//    WHERE d.user_id = ?`,
+//       [doctorUserId],
+//     );
+
+//     const doctor = doctorRows[0];
+
+//     if (doctorRows.length === 0) {
+//       return res.status(404).json({ message: "Doctor not found" });
+//     }
+
+//     const doctorId = doctorRows[0].id;
+//     const doctorName = doctorRows[0].doctorName;
+
+//     const [requestRows] = await db.query(
+//       `SELECT
+//     full_name,
+//     certificate_type,
+//     purpose,
+//     medical_conditions,
+//     dob,
+//     gender,
+//     notes,
+//     medications
+//    FROM certificate_requests
+//    WHERE id = ?`,
+//       [id],
+//     );
+
+//     if (!requestRows.length) {
+//       return res.status(404).json({ message: "Request not found" });
+//     }
+
+//     const request = requestRows[0];
+
+//     const [clinicRows] = await db.query(
+//       "SELECT clinic_name FROM doctor_clinics WHERE doctor_id = ? LIMIT 1",
+//       [doctorId],
+//     );
+
+//     const clinicName = clinicRows[0]?.clinic_name || " ";
+
+//     const certificateId = generateCertificateId();
+//     const expiryDate = calculateExpiry(validity);
+
+//     const dirPath = path.join(process.cwd(), "uploads/certificates");
+//     if (!fs.existsSync(dirPath)) {
+//       fs.mkdirSync(dirPath, { recursive: true });
+//     }
+
+//     const certificateFile = `uploads/certificates/${certificateId}.pdf`;
+//     const filePath = path.join(process.cwd(), certificateFile);
+
+//     const qrData = `${process.env.BASE_URL}/verify/${certificateId}`;
+//     const qrImage = await QRCode.toDataURL(qrData);
+
+
+//     const [docRows] = await db.query(
+//       `SELECT file_url
+//    FROM certificate_documents
+//    WHERE request_id = ? AND doc_type = 'profilePhoto'
+//    LIMIT 1`,
+//       [id],
+//     );
+
+//     let patientPhoto = "";
+
+//     if (docRows[0]?.file_url) {
+//       const fullPath = path.join(process.cwd(), docRows[0].file_url);
+
+//       if (fs.existsSync(fullPath)) {
+//         const imageBase64 = fs.readFileSync(fullPath, { encoding: "base64" });
+//         const ext = path.extname(fullPath).slice(1);
+
+//         patientPhoto = `data:image/${ext};base64,${imageBase64}`;
+//       }
+//     }
+
+
+//     const html = generateHTML({
+//       certificate_id: certificateId,
+//       date: new Date().toLocaleDateString("en-IN"),
+//       patient: request.full_name,
+//       doctor: doctorName,
+//       clinic: clinicName,
+//       medical_conditions: request.medical_conditions || "N/A",
+//       certificateType: request.certificate_type || "Medical",
+//       purpose: request.purpose || "N/A",
+//       issueDate: new Date().toLocaleDateString("en-IN"),
+
+//       expiryDate: expiryDate
+//         ? new Date(expiryDate).toLocaleDateString("en-IN")
+//         : "N/A",
+
+//       dob: request.dob
+//         ? new Date(request.dob).toLocaleDateString("en-IN")
+//         : "N/A",
+
+//       gender: request.gender || "N/A",
+//       notes: doctor_notes || request.notes || "Normal",
+//       treatment: fitness_status || "N/A",
+//       medicines: request.medications || "N/A",
+//       validity: validity || "N/A",
+//       doctorImage,
+//       logo,
+//       qr: qrImage,
+//       patientPhoto,
+//     });
+
+//     const pdfBuffer = await generatePDF(html);
+
+//     fs.writeFileSync(filePath, pdfBuffer);
+
+//     await db.query(
+//       `UPDATE certificate_requests
+//       SET status = 'approved',
+//            certificate_id = ?,
+//            doctor_notes = ?,
+//            fitness_status = ?,
+//            issued_at = NOW(),
+//            expiry_date = ?,
+//            certificate_file = ?
+//        WHERE id = ? AND doctor_id = ?`,
+//       [
+//         certificateId,
+//         doctor_notes,
+//         fitness_status,
+//         expiryDate,
+//         certificateFile,
+//         id,
+//         doctorId,
+//       ],
+//     );
+
+//     await db.query(
+//       `UPDATE certificate_request_timeline
+//    SET state = 'done'
+//    WHERE request_id = ?`,
+//       [id],
+//     );
+
+//     await db.query(
+//       `INSERT INTO certificate_request_timeline
+//    (request_id, label, state)
+//    VALUES (?, 'Approved', 'done')`,
+//       [id],
+//     );
+
+//     const [patientRows] = await db.query(
+//       "SELECT id AS user_id, email FROM users WHERE id = (SELECT user_id FROM certificate_requests WHERE id = ?)",
+//       [id],
+//     );
+
+//     const patient = patientRows[0];
+//     eventBus.emit(EVENTS.CERTIFICATE_APPROVED, {
+//       patientId: patient.user_id,
+//       patientEmail: patient.email,
+//       certificateId,
+//     });
+
+//     res.json({
+//       message: "Certificate approved and PDF generated successfully",
+//       certificateId,
+//     });
+//   } catch (error) {
+//     console.error("Approve Error:", error);
+//     res.status(500).json({ message: "Server Error" });
+//   }
+// };
+
+exports.approveRequest = async (req, res) => {
+  let connection = null;
+  let generatedFilePath = null;
+  let transactionCommitted = false;
   try {
+    console.log("API HIT");
+    const logoPath = path.join(process.cwd(), "src/assets/logo.webp");
+    const logoBase64 = fs.readFileSync(logoPath, { encoding: "base64" });
+    const logo = `data:image/webp;base64,${logoBase64}`;
+
     const { id } = req.params;
     const doctorUserId = req.user.id;
     const { doctor_notes, fitness_status, validity } = req.body;
 
+    const allowedFitnessStatus = [
+      "Fit — No Restrictions",
+      "Fit with Restrictions",
+      "Temporarily Unfit",
+      "Unfit",
+    ];
+
+    if (!fitness_status || !allowedFitnessStatus.includes(fitness_status)) {
+      return res.status(400).json({
+        message: "Invalid fitness status",
+      });
+    }
+
+const validityMap = {
+  "1 month": 30,
+  "3 months": 90,
+  "6 months": 180,
+  "1 year": 365,
+};
+
+const normalizedValidity = String(validity || "")
+  .trim()
+  .toLowerCase();
+
+const validityDays = validityMap[normalizedValidity];
+
+if (!validityDays) {
+  return res.status(400).json({
+    message: "Invalid certificate validity",
+  });
+}
+
+    // Doctor ID fetch karein
     const [doctorRows] = await db.query(
       `SELECT
     d.id,
@@ -394,46 +617,73 @@ exports.approveRequest = async (req, res) => {
       [doctorUserId],
     );
 
-    const doctor = doctorRows[0];
-
-    if (doctorRows.length === 0) {
-      return res.status(404).json({ message: "Doctor not found" });
+    if (!doctorRows.length) {
+      return res.status(404).json({
+        message: "Doctor not found",
+      });
     }
 
-    const doctorId = doctorRows[0].id;
-    const doctorName = doctorRows[0].doctorName;
+    const doctor = doctorRows[0];
 
-    const [requestRows] = await db.query(
+    const doctorId = doctor.id;
+    const doctorName = doctor.doctorName;
+
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    // Certificate request data fetch karein
+    const [requestRows] = await connection.query(
       `SELECT
-    full_name,
-    certificate_type,
-    purpose,
-    medical_conditions,
-    dob,
-    gender,
-    notes,
-    medications
+      full_name,
+      certificate_type,
+      purpose,
+      medical_conditions,
+      dob,
+      gender,
+      notes,
+      medications,
+      status,
+      certificate_id,
+      certificate_file
    FROM certificate_requests
-   WHERE id = ?`,
-      [id],
+   WHERE id = ?
+     AND doctor_id = ?
+   FOR UPDATE`,
+      [id, doctorId],
     );
 
     if (!requestRows.length) {
-      return res.status(404).json({ message: "Request not found" });
+      await connection.rollback();
+
+      return res.status(404).json({
+        message: "Request not found",
+      });
     }
 
     const request = requestRows[0];
 
-    const [clinicRows] = await db.query(
+    if (request.status === "approved") {
+      await connection.rollback();
+
+      return res.status(409).json({
+        message: "Certificate already approved",
+        certificateId: request.certificate_id,
+      });
+    }
+
+    // ✅ GET CLINIC NAME
+    const [clinicRows] = await connection.query(
       "SELECT clinic_name FROM doctor_clinics WHERE doctor_id = ? LIMIT 1",
       [doctorId],
     );
 
     const clinicName = clinicRows[0]?.clinic_name || " ";
 
+    // Certificate ID generate karein
     const certificateId = generateCertificateId();
-    const expiryDate = calculateExpiry(validity);
+    const expiryDate = calculateExpiry(validityDays);
 
+    // PDF path
     const dirPath = path.join(process.cwd(), "uploads/certificates");
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
@@ -441,12 +691,13 @@ exports.approveRequest = async (req, res) => {
 
     const certificateFile = `uploads/certificates/${certificateId}.pdf`;
     const filePath = path.join(process.cwd(), certificateFile);
+    //  Puppeteer PDF Generate
 
     const qrData = `${process.env.BASE_URL}/verify/${certificateId}`;
     const qrImage = await QRCode.toDataURL(qrData);
 
-
-    const [docRows] = await db.query(
+    //  GET PATIENT PROFILE PHOTO
+    const [docRows] = await connection.query(
       `SELECT file_url
    FROM certificate_documents
    WHERE request_id = ? AND doc_type = 'profilePhoto'
@@ -467,54 +718,56 @@ exports.approveRequest = async (req, res) => {
       }
     }
 
+    console.log("4");
 
     const html = generateHTML({
       certificate_id: certificateId,
-      date: new Date().toLocaleDateString("en-IN"),
+      date: new Date().toLocaleDateString(),
       patient: request.full_name,
       doctor: doctorName,
-      clinic: clinicName,
+      clinc: clinicName,
       medical_conditions: request.medical_conditions || "N/A",
-      certificateType: request.certificate_type || "Medical",
-      purpose: request.purpose || "N/A",
-      issueDate: new Date().toLocaleDateString("en-IN"),
-
+      certificateType: request.certificate_type,
+      purpose: request.purpose,
+      issueDate: new Date().toLocaleDateString(),
       expiryDate: expiryDate
-        ? new Date(expiryDate).toLocaleDateString("en-IN")
+        ? new Date(expiryDate).toLocaleDateString()
         : "N/A",
-
       dob: request.dob
         ? new Date(request.dob).toLocaleDateString("en-IN")
         : "N/A",
-
       gender: request.gender || "N/A",
-      notes: doctor_notes || request.notes || "Normal",
+      notes: request.notes || "Normal",
       treatment: fitness_status || "N/A",
       medicines: request.medications || "N/A",
-      validity: validity || "N/A",
-      doctorImage,
-      logo,
+      days: validityDays,
+      doctorImage: doctor.profile_image,
+      logo: logo,
       qr: qrImage,
-      patientPhoto,
+      patientPhoto: patientPhoto,
     });
 
     const pdfBuffer = await generatePDF(html);
 
     fs.writeFileSync(filePath, pdfBuffer);
 
-    await db.query(
+    generatedFilePath = filePath;
+
+    const [updateResult] = await connection.query(
       `UPDATE certificate_requests
-      SET status = 'approved',
-           certificate_id = ?,
-           doctor_notes = ?,
-           fitness_status = ?,
-           issued_at = NOW(),
-           expiry_date = ?,
-           certificate_file = ?
-       WHERE id = ? AND doctor_id = ?`,
+   SET status = 'approved',
+       certificate_id = ?,
+       doctor_notes = ?,
+       fitness_status = ?,
+       issued_at = NOW(),
+       expiry_date = ?,
+       certificate_file = ?
+   WHERE id = ?
+     AND doctor_id = ?
+     AND status <> 'approved'`,
       [
         certificateId,
-        doctor_notes,
+        doctor_notes || null,
         fitness_status,
         expiryDate,
         certificateFile,
@@ -523,39 +776,91 @@ exports.approveRequest = async (req, res) => {
       ],
     );
 
-    await db.query(
+    // Safety check
+    if (updateResult.affectedRows !== 1) {
+      throw new Error("Certificate could not be approved");
+    }
+
+    await connection.query(
       `UPDATE certificate_request_timeline
    SET state = 'done'
    WHERE request_id = ?`,
       [id],
     );
 
-    await db.query(
+    await connection.query(
       `INSERT INTO certificate_request_timeline
    (request_id, label, state)
    VALUES (?, 'Approved', 'done')`,
       [id],
     );
 
-    const [patientRows] = await db.query(
-      "SELECT id AS user_id, email FROM users WHERE id = (SELECT user_id FROM certificate_requests WHERE id = ?)",
+    const [patientRows] = await connection.query(
+      `SELECT id AS user_id, email
+   FROM users
+   WHERE id = (
+     SELECT user_id
+     FROM certificate_requests
+     WHERE id = ?
+   )`,
       [id],
     );
 
-    const patient = patientRows[0];
-    eventBus.emit(EVENTS.CERTIFICATE_APPROVED, {
-      patientId: patient.user_id,
-      patientEmail: patient.email,
-      certificateId,
-    });
+    const patient = patientRows[0] || null;
 
-    res.json({
+    await connection.commit();
+    transactionCommitted = true;
+
+    // 🔥 EVENT FIRE
+    if (patient) {
+      try {
+        eventBus.emit(EVENTS.CERTIFICATE_APPROVED, {
+          patientId: patient.user_id,
+          patientEmail: patient.email,
+          certificateId,
+        });
+      } catch (eventError) {
+        console.error("Certificate approved event error:", eventError);
+      }
+    }
+
+    return res.json({
       message: "Certificate approved and PDF generated successfully",
       certificateId,
     });
   } catch (error) {
+    // Transaction fail hua to DB changes rollback
+    if (connection && !transactionCommitted) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error("Rollback Error:", rollbackError);
+      }
+    }
+
+    // Transaction fail hua to generated PDF delete
+    if (
+      generatedFilePath &&
+      !transactionCommitted &&
+      fs.existsSync(generatedFilePath)
+    ) {
+      try {
+        fs.unlinkSync(generatedFilePath);
+      } catch (fileError) {
+        console.error("PDF cleanup error:", fileError);
+      }
+    }
+
     console.error("Approve Error:", error);
-    res.status(500).json({ message: "Server Error" });
+
+    return res.status(500).json({
+      message: "Server Error",
+    });
+  } finally {
+    // DB connection pool me wapas
+    if (connection) {
+      connection.release();
+    }
   }
 };
 

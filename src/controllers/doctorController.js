@@ -1951,12 +1951,12 @@ exports.getMyQR = async (req, res) => {
   try {
     const [[doctor]] = await db.query(
       `SELECT
-    id,
-    doctorName,
-    specialization
-FROM doctors
-WHERE user_id = ?
-AND status = 'APPROVED'`,
+        id,
+        doctorName,
+        specialization
+       FROM doctors
+       WHERE user_id = ?
+       AND status = 'APPROVED'`,
       [userId],
     );
 
@@ -1966,6 +1966,21 @@ AND status = 'APPROVED'`,
       });
     }
 
+    const [subscriptions] = await db.execute(
+      `SELECT id
+       FROM subscriptions
+       WHERE user_id = ?
+       AND status = 'active'
+       ORDER BY current_period_end DESC
+       LIMIT 1`,
+      [userId],
+    );
+
+    if (!subscriptions.length) {
+      return res.status(403).json({
+        message: "Active subscription required",
+      });
+    }
     const qrUrl = `${frontendUrl}/qr-redirect?doctorId=${doctor.id}`;
 
     return res.json({
@@ -1975,7 +1990,7 @@ AND status = 'APPROVED'`,
       qrUrl,
     });
   } catch (err) {
-    console.error(err);
+    console.error("Get My QR Error:", err);
 
     return res.status(500).json({
       message: "Server error",
