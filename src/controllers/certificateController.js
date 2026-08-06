@@ -320,34 +320,48 @@ exports.getRequestByIdForDoctor = async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Request check
     const [rows] = await db.query(
       `SELECT * FROM certificate_requests WHERE id = ?`,
-      [id],
+      [id]
     );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        message: "Request not found",
+      });
+    }
 
     await db.query(
       `UPDATE certificate_requests
-   SET status = 'verification'
-   WHERE id = ?`,
-      [id],
+       SET status = 'verification'
+       WHERE id = ?
+       AND status = 'pending'`,
+      [id]
     );
 
-    await db.query(
-      `UPDATE certificate_request_timeline
-   SET state = 'done'
-   WHERE request_id = ?`,
-      [id],
-    );
-
-
-    if (!rows.length) {
-      return res.status(404).json({ message: "Request not found" });
+    if (rows[0].status === "pending") {
+      await db.query(
+        `UPDATE certificate_request_timeline
+         SET state = 'done'
+         WHERE request_id = ?`,
+        [id]
+      );
     }
 
-    res.json(rows[0]);
+    const [updatedRows] = await db.query(
+      `SELECT * FROM certificate_requests WHERE id = ?`,
+      [id]
+    );
+
+    res.json(updatedRows[0]);
+
   } catch (error) {
     console.error("Error fetching request details:", error);
-    res.status(500).json({ message: "Server error" });
+
+    res.status(500).json({
+      message: "Server error",
+    });
   }
 };
 

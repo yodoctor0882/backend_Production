@@ -401,6 +401,10 @@ exports.resetPassword = async (req, res) => {
 
 exports.uploadProfileImage = async (req, res) => {
   try {
+
+    console.log("User Role:", req.user.role);
+    console.log("Uploaded File:", req.file);
+
     if (!req.file) {
       return res.status(400).json({
         success: false,
