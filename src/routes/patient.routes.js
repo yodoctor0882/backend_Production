@@ -6,19 +6,32 @@ const { verifyToken } = require("../middleware/auth");
 const { allowRoles } = require("../middleware/roles");
 const { requireActiveUser } = require("../middleware/activeUser");
 const upload = require("../middleware/upload.middleware");
+const { apiLimiter,paymentLimiter } = require("../middleware/rateLimit");
+
 
 // Auth
 router.post("/register", patientController.register);
 
 // Profile
-router.get("/getprofile", verifyToken, patientController.getProfile);
-router.put("/updateProfile", verifyToken, patientController.updateProfile);
+router.get(
+  "/getprofile",
+  verifyToken,
+  apiLimiter,
+  patientController.getProfile,
+);
+router.put(
+  "/updateProfile",
+  verifyToken,
+  apiLimiter,
+  patientController.updateProfile,
+);
 router.put("/change-password", verifyToken, patientController.changePassword);
 
 // Dashboard
 router.get(
   "/dashboard",
   verifyToken,
+  apiLimiter,
   requireActiveUser,
   allowRoles("PATIENT"),
   patientController.getDashboard,
@@ -77,9 +90,6 @@ router.post(
   patientController.submitDoctorReview,
 );
 
-
-
-
 // Family
 router.post("/addfamily", verifyToken, patientController.addFamilyMember);
 router.get("/getfamily", verifyToken, patientController.getFamilyMembers);
@@ -114,8 +124,6 @@ router.post("/bookhomecare", patientController.bookhomecareservices);
 
 // ✅ GET API
 router.get("/getbookhomecare", patientController.getbookhomecareservices);
-
-
 
 // Lab Categories
 router.get("/lab/categories", patientController.getCategories);
