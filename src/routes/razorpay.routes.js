@@ -3,6 +3,8 @@ const router = express.Router();
 const { verifyToken } = require("../middleware/auth");
 const razorpayController = require("../controllers/razorpayController");
 
+const { paymentLimiter } = require("../middleware/rateLimit");
+
 // ===================== CONTROLLERS ======================
 
 const {
@@ -49,12 +51,14 @@ router.get("/plans/:planId", razorpayController.getPlanById);
 router.post(
   "/subscriptions/create",
   verifyToken,
+  paymentLimiter,
   razorpayController.createSubscription,
 );
 
 router.post(
   "/subscriptions/verify",
   verifyToken,
+  paymentLimiter,
   razorpayController.verifySubscription,
 );
 
@@ -75,12 +79,14 @@ router.get(
 router.post(
   "/subscriptions/:id/cancel",
   verifyToken,
+  paymentLimiter,
   razorpayController.cancelSubscription,
 );
 
 router.post(
   "/subscriptions/:id/upgrade",
   verifyToken,
+  paymentLimiter,
   razorpayController.upgradeSubscription,
 );
 
@@ -89,10 +95,11 @@ router.post(
 router.post(
   "/payments/create-order",
   verifyToken,
+  paymentLimiter,
   razorpayController.createOrder,
 );
 
-router.post("/payments/verify", verifyToken, razorpayController.verifyPayment);
+router.post("/payments/verify", verifyToken, paymentLimiter,razorpayController.verifyPayment);
 
 router.get("/payments/:paymentId", verifyToken, razorpayController.getPayment);
 
@@ -133,6 +140,7 @@ router.post(
 router.post(
   "/lab/payments/verify",
   verifyToken,
+  paymentLimiter,
   razorpayController.verifyLabPayment,
 );
 

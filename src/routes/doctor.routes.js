@@ -6,6 +6,7 @@ const { allowRoles } = require("../middleware/roles");
 const { requireActiveUser } = require("../middleware/activeUser");
 const upload = require("../middleware/upload.middleware");
 const uploadDoctorDocs = require("../middleware/uploadDoctorDocs");
+const { apiLimiter } = require("../middleware/rateLimit");
 
 // const { apiLimiter } = require("../middleware/rateLimit");
 
@@ -15,6 +16,7 @@ const uploadDoctorDocs = require("../middleware/uploadDoctorDocs");
 router.get(
   "/dashboard",
   verifyToken,
+  apiLimiter,  
   allowRoles("DOCTOR"),
   doctorController.getDashboard,
 );
@@ -25,6 +27,7 @@ router.get(
 router.get(
   "/profile",
   verifyToken,
+  apiLimiter,     
   allowRoles("DOCTOR"),
   doctorController.getDoctorProfile,
 );
@@ -33,6 +36,7 @@ router.get(
 router.put(
   "/profile",
   verifyToken,
+  apiLimiter, 
   allowRoles("DOCTOR"),
   doctorController.updateDoctorProfile,
 );

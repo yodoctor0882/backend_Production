@@ -27,9 +27,18 @@ const upload = multer({
 
       if (!allowed.includes(ext)) {
         return cb(new Error("Invalid image format"), null);
+        
       }
 
+      // console.log("ROLE =", role);
+
+      // const ext = path.extname(file.originalname).toLowerCase();
+
+
       const fileName = `profiles/${role}s/user_${req.user.id}_${Date.now()}${ext}`;
+
+      // console.log("Uploading to:", fileName);
+
 
       cb(null, fileName);
     },

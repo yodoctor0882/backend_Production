@@ -2,13 +2,15 @@ const { verifyToken } = require("../middleware/auth");
 const upload = require("../middleware/upload.middleware");
 const authController = require("../controllers/authController");
 const express = require("express");
-
+const { authLimiter } = require("../middleware/rateLimit");
 const router = express.Router();
 
-router.post("/login", authController.login);
-router.post("/forgot-password", authController.forgotPassword);
-router.post("/verify-reset", authController.verifyReset);
-router.post("/reset-password", authController.resetPassword);
+router.post("/login", authLimiter,authController.login);
+router.post("/forgot-password", authLimiter,authController.forgotPassword);
+router.post("/verify-reset", authLimiter,authController.verifyReset);
+router.post("/reset-password", authLimiter,authController.resetPassword);
+
+
 
 // PROFILE IMAGE UPLOAD
 router.post(
@@ -38,7 +40,7 @@ router.delete(
   authController.deleteProfileImage
 );
 
-router.post("/google-login", authController.googleLogin);
+router.post("/google-login", authLimiter,authController.googleLogin);
 
 router.delete("/account-deletion", verifyToken, authController.deleteAccount);
 

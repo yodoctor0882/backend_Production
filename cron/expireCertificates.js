@@ -9,11 +9,23 @@ const expireCertificatesJob = () => {
 
     try {
       const [rows] = await db.query(`
-        SELECT id, certificate_id, user_id, email
-        FROM certificate_requests
-        WHERE expiry_date < NOW()
-        AND status = 'Approved'
-      `);
+    SELECT
+    cr.id,
+    cr.certificate_id,
+    cr.user_id,
+    u.email
+  FROM certificate_requests cr
+  JOIN users u ON u.id = cr.user_id
+  WHERE cr.expiry_date < NOW()
+    AND cr.status = 'approved'
+`);
+
+      // const [rows] = await db.query(`
+      //   SELECT id, certificate_id, user_id, email
+      //   FROM certificate_requests
+      //   WHERE expiry_date < NOW()
+      //   AND status = 'Approved'
+      // `);
 
       if (rows.length === 0) {
         console.log("[CRON] No certificates found for expiry.");
@@ -30,7 +42,7 @@ const expireCertificatesJob = () => {
         SET status = 'Expired'
         WHERE id IN (${placeholders})
         `,
-        ids
+        ids,
       );
 
       for (const row of rows) {
@@ -52,11 +64,23 @@ const expireCertificatesJob = () => {
 
     try {
       const [rows] = await db.query(`
-        SELECT id, certificate_id, user_id, email
-        FROM certificate_requests
-        WHERE DATE(expiry_date) = DATE_ADD(CURDATE(), INTERVAL 2 DAY)
-        AND status = 'Approved'
-      `);
+  SELECT
+    cr.id,
+    cr.certificate_id,
+    cr.user_id,
+    u.email
+  FROM certificate_requests cr
+  JOIN users u ON u.id = cr.user_id
+  WHERE DATE(cr.expiry_date) = DATE_ADD(CURDATE(), INTERVAL 2 DAY)
+    AND cr.status = 'approved'
+`);
+
+      // const [rows] = await db.query(`
+      //   SELECT id, certificate_id, user_id, email
+      //   FROM certificate_requests
+      //   WHERE DATE(expiry_date) = DATE_ADD(CURDATE(), INTERVAL 2 DAY)
+      //   AND status = 'approved'
+      // `);
 
       for (const row of rows) {
         eventBus.emit(EVENTS.CERTIFICATE_EXPIRY_REMINDER, {

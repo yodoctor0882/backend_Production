@@ -35,8 +35,8 @@ requiredEnv.forEach((key) => {
 
 app.use(helmet());
 
-app.use("/auth", authLimiter);
-app.use("/razorpay", paymentLimiter);
+// app.use("/auth", authLimiter);
+// app.use("/razorpay", paymentLimiter);
 // app.use(["/patient", "/doctor", "/admin"], apiLimiter);
 
 
