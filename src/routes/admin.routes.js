@@ -73,7 +73,6 @@ router.put(
   adminController.updateDoctorStatus,
 );
 
-
 router.get(
   "/analytics/appointments",
   verifyToken,
@@ -81,7 +80,6 @@ router.get(
   allowRoles("ADMIN"),
   adminController.getAppointmentAnalytics,
 );
-
 
 router.get(
   "/contact-requests",
@@ -242,6 +240,32 @@ router.put(
   requireActiveUser,
   allowRoles("ADMIN"),
   adminController.unblockUser,
+);
+
+// ================= HOME CARE =================
+
+// Get All Home Care Bookings
+router.get(
+  "/homecarebookings",
+  verifyToken,
+  allowRoles("ADMIN"),
+  adminController.getbookhomecareservices,
+);
+
+// Admin Accept / Reject
+router.put(
+  "/homecarebookings/:id/status",
+  verifyToken,
+  allowRoles("ADMIN"),
+  adminController.updateHomeCareAdminStatus,
+);
+
+// Start / Complete Home Care Service
+router.put(
+  "/homecarebookings/:id/service-status",
+  verifyToken,
+  allowRoles("ADMIN"),
+  adminController.updateHomeCareServiceStatus,
 );
 
 module.exports = router;

@@ -120,7 +120,7 @@ router.get(
 );
 
 // ✅ POST API
-router.post("/bookhomecare", patientController.bookhomecareservices);
+// router.post("/bookhomecare", patientController.bookhomecareservices);
 
 // ✅ GET API
 router.get("/getbookhomecare", patientController.getbookhomecareservices);
@@ -151,6 +151,35 @@ router.get(
   "/lab-bookings/:bookingId",
   verifyToken,
   patientController.getLabBookingDetails,
+);
+
+
+// ✅ POST API
+router.post(
+  "/bookhomecare",
+  verifyToken,
+  patientController.bookhomecareservices,
+);
+router.get(
+  "/homecarehistory",
+  verifyToken,
+  allowRoles("PATIENT"),
+  patientController.getMyHomeCareHistory,
+);
+
+router.get(
+  "/homecarehistory/:id",
+  verifyToken,
+  allowRoles("PATIENT"),
+  patientController.getMyHomeCareBookingById,
+);
+
+// Patient Cancel Booking
+router.put(
+  "/homecarehistory/:id/cancel",
+  verifyToken,
+  allowRoles("PATIENT"),
+  patientController.cancelMyHomeCareBooking
 );
 
 module.exports = router;

@@ -114,14 +114,13 @@ exports.createStep1 = async (req, res) => {
       [userId, (fullName || "").trim(), gender, bio?.trim() || null],
     );
 
- await connection.commit();
+    await connection.commit();
 
-eventBus.emit(EVENTS.DOCTOR_REGISTERED, {
-  doctorId: userId,
-  doctorName: fullName.trim(),
-});
+    eventBus.emit(EVENTS.DOCTOR_REGISTERED, {
+      doctorId: userId,
+      doctorName: fullName.trim(),
+    });
 
-  
     const token = jwt.sign(
       { id: userId, role: "DOCTOR" },
       process.env.JWT_SECRET,
@@ -298,7 +297,7 @@ exports.registerStep2 = async (req, res) => {
         Number(experience),
         regNumber.trim(),
         stateCouncil.trim(),
-        formattedDate, 
+        formattedDate,
         userId,
       ],
     );
@@ -316,7 +315,7 @@ exports.registerStep2 = async (req, res) => {
 
     return res.status(500).json({
       message: "Server error",
-      error: error.message, 
+      error: error.message,
     });
   } finally {
     connection.release();
@@ -561,7 +560,7 @@ exports.registerStep5 = async (req, res) => {
 
     const values = normalizedDays.map((day) => [
       doctorId,
-      day, 
+      day,
       morningEnabled ? formatTime(morningStart) : null,
       morningEnabled ? formatTime(morningEnd) : null,
       eveningEnabled ? formatTime(eveningStart) : null,
@@ -738,12 +737,12 @@ exports.finalSubmitRegistration = async (req, res) => {
       [userId],
     );
 
-await connection.commit();
+    await connection.commit();
 
-eventBus.emit(EVENTS.DOCTOR_REGISTRATION_SUBMITTED, {
-  doctorId: userId,
-  doctorName: doctorRow.doctorName,
-});
+    eventBus.emit(EVENTS.DOCTOR_REGISTRATION_SUBMITTED, {
+      doctorId: userId,
+      doctorName: doctorRow.doctorName,
+    });
 
     return res.json({
       message: "Registration submitted successfully",
@@ -1086,7 +1085,6 @@ exports.getTodayQueue = async (req, res) => {
   }
 };
 
-
 // START APPOINTMENT
 
 exports.startAppointment = async (req, res) => {
@@ -1172,7 +1170,6 @@ exports.startAppointment = async (req, res) => {
 
     // EXISTING LOGIC
 
-
     const [[existing]] = await connection.query(
       `SELECT id FROM appointments
        WHERE doctor_id = ?
@@ -1222,7 +1219,6 @@ exports.startAppointment = async (req, res) => {
     connection.release();
   }
 };
-
 
 // CALL NEXT TOKEN
 
@@ -1300,7 +1296,6 @@ exports.callNextToken = async (req, res) => {
   }
 };
 
-
 // GET CURRENT APPOINTMENT
 
 exports.getCurrentAppointment = async (req, res) => {
@@ -1360,7 +1355,6 @@ exports.getCurrentAppointment = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
-
 
 // GET NEXT APPOINTMENT
 
@@ -1470,7 +1464,7 @@ exports.updateClinicStatus = async (req, res) => {
 // getDoctorReviews
 
 exports.getDoctorReviews = async (req, res) => {
-  const userId = req.user.id; 
+  const userId = req.user.id;
   const page = Number(req.query.page) || 1;
   const limit = 10;
   const offset = (page - 1) * limit;
@@ -1494,8 +1488,8 @@ exports.getDoctorReviews = async (req, res) => {
        WHERE doctor_id = ?`,
       [doctorId],
     );
-const [reviews] = await db.query(
-  `SELECT
+    const [reviews] = await db.query(
+      `SELECT
       r.id,
       r.rating,
       r.comment,
@@ -1538,8 +1532,8 @@ const [reviews] = await db.query(
 
    ORDER BY r.created_at DESC
    LIMIT ? OFFSET ?`,
-  [doctorId, limit, offset],
-);
+      [doctorId, limit, offset],
+    );
 
     const [[stats]] = await db.query(
       `SELECT 
@@ -1852,7 +1846,6 @@ exports.downloadQR = async (req, res) => {
 
     let doctorImage = user?.profile_image || "https://via.placeholder.com/60";
 
-
     const qrImage = await QRCode.toDataURL(qrValue);
 
     const html = generateQRHTML({
@@ -1919,7 +1912,7 @@ exports.getMyQRRedirect = async (req, res) => {
       return res.status(403).send("Doctor not approved");
     }
 
-``
+    ``;
     await db.query(
       `INSERT INTO qr_scans (doctor_id, scanned_at) VALUES (?, NOW())`,
       [doctorId],
@@ -1937,7 +1930,6 @@ exports.getMyQRRedirect = async (req, res) => {
     res.status(500).send("Server error");
   }
 };
-
 
 // DOCTOR – getMyQR
 
@@ -2183,21 +2175,98 @@ exports.manualVisitBooking = async (req, res) => {
 
 //addPrescription
 
+// exports.addPrescription = async (req, res) => {
+//   const userId = req.user.id;
+//   const { id: appointmentId } = req.params;
+//   const { medicines, instructions } = req.body;
+
+//   try {
+//     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
+//       userId,
+//     ]);
+
+//     if (!doc) {
+//       return res.status(404).json({ message: "Doctor not found" });
+//     }
+
+//     const doctorId = doc.id;
+//     const [[appt]] = await db.query(
+//       `SELECT id, patient_id, family_member_id
+//        FROM appointments
+//        WHERE id = ?
+//        AND doctor_id = ?
+//        AND status = 'COMPLETED'`,
+//       [appointmentId, doctorId],
+//     );
+
+//     if (!appt) {
+//       return res.status(400).json({
+//         message: "Prescription allowed only after appointment completion",
+//       });
+//     }
+
+//     const patientId = appt.patient_id || appt.family_member_id;
+
+//     if (!patientId) {
+//       return res.status(400).json({
+//         message: "No linked patient found",
+//       });
+//     }
+
+//     const [[existing]] = await db.query(
+//       `SELECT id FROM visit_summaries WHERE appointment_id = ?`,
+//       [appointmentId],
+//     );
+
+//     if (existing) {
+//       await db.query(
+//         `UPDATE visit_summaries
+//          SET prescription = ?, notes = ?
+//          WHERE appointment_id = ?`,
+//         [medicines || null, instructions || null, appointmentId],
+//       );
+//     } else {
+//       await db.query(
+//         `INSERT INTO visit_summaries
+//          (appointment_id, prescription, notes)
+//          VALUES (?, ?, ?)`,
+//         [appointmentId, medicines || null, instructions || null],
+//       );
+//     }
+
+//     return res.json({
+//       message: existing
+//         ? "Prescription updated"
+//         : "Prescription added successfully",
+//     });
+//   } catch (err) {
+//     console.error(err);
+//     return res.status(500).json({
+//       message: "Server error",
+//     });
+//   }
+// };
+
 exports.addPrescription = async (req, res) => {
   const userId = req.user.id;
   const { id: appointmentId } = req.params;
   const { medicines, instructions } = req.body;
 
   try {
+    // Find doctor
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
 
     if (!doc) {
-      return res.status(404).json({ message: "Doctor not found" });
+      return res.status(404).json({
+        message: "Doctor not found",
+      });
     }
 
     const doctorId = doc.id;
+
+    // Check completed appointment
     const [[appt]] = await db.query(
       `SELECT id, patient_id, family_member_id
        FROM appointments
@@ -2213,6 +2282,7 @@ exports.addPrescription = async (req, res) => {
       });
     }
 
+    // Check patient
     const patientId = appt.patient_id || appt.family_member_id;
 
     if (!patientId) {
@@ -2221,34 +2291,35 @@ exports.addPrescription = async (req, res) => {
       });
     }
 
+    // Check if prescription already exists
     const [[existing]] = await db.query(
-      `SELECT id FROM visit_summaries WHERE appointment_id = ?`,
+      `SELECT id
+       FROM visit_summaries
+       WHERE appointment_id = ?`,
       [appointmentId],
     );
 
+    // If already exists, DO NOT UPDATE
     if (existing) {
-      await db.query(
-        `UPDATE visit_summaries
-         SET prescription = ?, notes = ?
-         WHERE appointment_id = ?`,
-        [medicines || null, instructions || null, appointmentId],
-      );
-    } else {
-      await db.query(
-        `INSERT INTO visit_summaries
-         (appointment_id, prescription, notes)
-         VALUES (?, ?, ?)`,
-        [appointmentId, medicines || null, instructions || null],
-      );
+      return res.status(409).json({
+        message: "Prescription already added and cannot be modified",
+      });
     }
 
-    return res.json({
-      message: existing
-        ? "Prescription updated"
-        : "Prescription added successfully",
+    // Add prescription only first time
+    await db.query(
+      `INSERT INTO visit_summaries
+       (appointment_id, prescription, notes)
+       VALUES (?, ?, ?)`,
+      [appointmentId, medicines || null, instructions || null],
+    );
+
+    return res.status(201).json({
+      message: "Prescription added successfully",
     });
   } catch (err) {
-    console.error(err);
+    console.error("Add Prescription Error:", err);
+
     return res.status(500).json({
       message: "Server error",
     });
@@ -3060,7 +3131,6 @@ exports.getDoctorProfile = async (req, res) => {
         day: a.day_code,
       }));
 
-  
     doctor.availableDays = doctor.availability.map((a) => a.day);
 
     res.json({ doctor });
@@ -3123,7 +3193,6 @@ exports.getDoctorVerificationStatus = async (req, res) => {
       });
     }
 
-    
     const [[doctor]] = await db.query(
       `SELECT
         d.id AS doctorId,
