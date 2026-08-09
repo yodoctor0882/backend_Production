@@ -1706,3 +1706,175 @@ exports.updateTestStatus = async (req, res) => {
     });
   }
 };
+
+
+// ✅ GET → Get All Bookings
+
+exports.getbookhomecareservices = async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      "SELECT * FROM homecareservice ORDER BY created_at DESC",
+    );
+
+    res.status(200).json({
+      success: true,
+      count: rows.length,
+      data: rows,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+};
+
+exports.updateHomeCareAdminStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!["CONFIRMED", "REJECTED"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status",
+      });
+    }
+
+    const [rows] = await db.execute(
+      `
+      SELECT id, status
+      FROM homecareservice
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found",
+      });
+    }
+
+    if (rows[0].status !== "PENDING") {
+      return res.status(400).json({
+        success: false,
+        message: `Booking is already ${rows[0].status}`,
+      });
+    }
+
+    await db.execute(
+      `
+      UPDATE homecareservice
+      SET status = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+      `,
+      [status, id]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message:
+        status === "CONFIRMED"
+          ? "Booking confirmed successfully"
+          : "Booking rejected successfully",
+      data: {
+        id: Number(id),
+        status,
+      },
+    });
+
+  } catch (error) {
+    console.error("Admin homecare status error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update booking status",
+    });
+  }
+};
+
+exports.updateHomeCareServiceStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!["IN_PROGRESS", "COMPLETED"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid service status",
+      });
+    }
+
+    const [rows] = await db.execute(
+      `
+      SELECT id, status
+      FROM homecareservice
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found",
+      });
+    }
+
+    const currentStatus = rows[0].status;
+
+    if (
+      status === "IN_PROGRESS" &&
+      currentStatus !== "CONFIRMED"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `Service can only start from CONFIRMED status. Current status: ${currentStatus}`,
+      });
+    }
+
+    if (
+      status === "COMPLETED" &&
+      currentStatus !== "IN_PROGRESS"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `Service can only be completed from IN_PROGRESS status. Current status: ${currentStatus}`,
+      });
+    }
+
+    await db.execute(
+      `
+      UPDATE homecareservice
+      SET status = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+      `,
+      [status, id]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message:
+        status === "IN_PROGRESS"
+          ? "Home care service started"
+          : "Home care service completed",
+      data: {
+        id: Number(id),
+        status,
+      },
+    });
+
+  } catch (error) {
+    console.error("Homecare service status error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update service status",
+    });
+  }
+};

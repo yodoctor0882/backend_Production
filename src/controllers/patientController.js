@@ -2163,35 +2163,52 @@ exports.getPrescription = async (req, res) => {
 
 exports.bookhomecareservices = async (req, res) => {
   try {
+    const patientId = req.user.id;
+
     const {
       full_name,
       patient_age,
       patient_gender,
-
       patient_latitude,
       patient_longitude,
-
       gender_preference,
       emergency_booking,
-
       address,
       contact_number,
-
       service_type,
       medical_condition,
-
       duration_type,
       number_of_days,
-
       preferred_date,
       time_slot,
-
       notes,
     } = req.body;
 
-    const query = `
-INSERT INTO homecareservice
-(
+ const query = `
+  INSERT INTO homecareservice (
+    patient_id,
+    full_name,
+    patient_latitude,
+    patient_longitude,
+    address,
+    contact_number,
+    service_type,
+    medical_condition,
+    duration_type,
+    number_of_days,
+    preferred_date,
+    time_slot,
+    notes,
+    patient_age,
+    patient_gender,
+    gender_preference,
+    emergency_booking,
+    status
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+    const [result] = await db.execute(query,[
+  patientId,
   full_name,
   patient_latitude,
   patient_longitude,
@@ -2203,43 +2220,168 @@ INSERT INTO homecareservice
   number_of_days,
   preferred_date,
   time_slot,
-  notes,
+  notes || null,
   patient_age,
-patient_gender,
-gender_preference,
-emergency_booking
-)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?)
-`;
+  patient_gender,
+  gender_preference || "Any",
+  emergency_booking ? 1 : 0,
+  "PENDING",
+]);
 
-    const [result] = await db.execute(query, [
-      full_name,
-      patient_latitude,
-      patient_longitude,
-      address,
-      contact_number,
-      service_type,
-      medical_condition,
-      duration_type,
-      number_of_days,
-      preferred_date,
-      time_slot,
-      notes,
-      patient_age,
-      patient_gender,
-      gender_preference,
-      emergency_booking,
-    ]);
-
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Booking created successfully",
-      bookingId: result.insertId,
+      data: {
+        id: result.insertId,
+        booking_id: `HC-${String(result.insertId).padStart(6, "0")}`,
+        status: "PENDING",
+      },
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("Homecare booking error:", error);
+
+    return res.status(500).json({
       success: false,
       error: error.message,
+    });
+  }
+};
+
+exports.getMyHomeCareHistory = async (req, res) => {
+  try {
+    const patientId = req.user.id;
+
+    const [rows] = await db.execute(
+      `
+      SELECT *
+      FROM homecareservice
+      WHERE patient_id = ?
+      ORDER BY created_at DESC
+      `,
+      [patientId]
+    );
+
+    // Display booking ID
+    const data = rows.map((booking) => ({
+      ...booking,
+      booking_id: `HC-${String(booking.id).padStart(6, "0")}`,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: data.length,
+      data,
+    });
+
+  } catch (error) {
+    console.error("Get home care history error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch home care history",
+    });
+  }
+};
+
+exports.getMyHomeCareBookingById = async (req, res) => {
+  try {
+    const patientId = req.user.id;
+    const { id } = req.params;
+
+    const [rows] = await db.execute(
+      `
+      SELECT *
+      FROM homecareservice
+      WHERE id = ?
+        AND patient_id = ?
+      LIMIT 1
+      `,
+      [id, patientId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found",
+      });
+    }
+
+    const booking = rows[0];
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...booking,
+        booking_id: `HC-${String(booking.id).padStart(6, "0")}`,
+      },
+    });
+
+  } catch (error) {
+    console.error("Get home care details error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch booking details",
+    });
+  }
+};
+
+exports.cancelMyHomeCareBooking = async (req, res) => {
+  try {
+    const patientId = req.user.id;
+    const { id } = req.params;
+
+    const [rows] = await db.execute(
+      `
+      SELECT id, status
+      FROM homecareservice
+      WHERE id = ?
+        AND patient_id = ?
+      LIMIT 1
+      `,
+      [id, patientId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found",
+      });
+    }
+
+    if (!["PENDING", "CONFIRMED"].includes(rows[0].status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Booking cannot be cancelled because it is ${rows[0].status}`,
+      });
+    }
+
+    await db.execute(
+      `
+      UPDATE homecareservice
+      SET status = 'CANCELLED',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND patient_id = ?
+      `,
+      [id, patientId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Booking cancelled successfully",
+      data: {
+        id: Number(id),
+        status: "CANCELLED",
+      },
+    });
+
+  } catch (error) {
+    console.error("Cancel homecare error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to cancel booking",
     });
   }
 };
