@@ -11,11 +11,39 @@ const uploadCertificateDocs = require("../middleware/uploadCertificateDocs");
 /* ================= PATIENT APIs ================= */
 
 // Create request
+
 router.post(
   "/create",
   verifyToken,
   requireActiveUser,
   certificateController.createRequest
+);
+
+// certificate payment order
+
+router.post(
+  "/payment/order",
+  verifyToken,
+  requireActiveUser,
+  certificateController.createPaymentOrder
+);
+
+// certificate payment verify
+
+router.post(
+  "/payment/verify",
+  verifyToken,
+  requireActiveUser,
+  certificateController.verifyPayment
+);
+
+// /payment/refund"
+
+router.post(
+  "/payment/refund",
+  verifyToken,
+  requireActiveUser,
+  certificateController.refundCertificatePayment
 );
 
 // Upload documents
@@ -134,5 +162,10 @@ router.get(
   requireActiveUser,
   certificateController.getRequestById
 );
+
+// for certificate
+
+router.get("/allcertificate-doctors", certificateController.getAllCertificateDoctors);
+
 
 module.exports = router;

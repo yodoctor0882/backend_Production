@@ -1707,7 +1707,6 @@ exports.updateTestStatus = async (req, res) => {
   }
 };
 
-
 // ✅ GET → Get All Bookings
 
 exports.getbookhomecareservices = async (req, res) => {

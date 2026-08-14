@@ -84,7 +84,12 @@ const registerEvents = () => {
     certHandler.handleExpiryReminder,
   );
 
-  console.log("✅ Application event listeners registered");
+  eventBus.on(
+    EVENTS.CERTIFICATE_REQUEST_CREATED,
+    certHandler.handleCertificateRequestCreated,
+  );
+
+  // console.log("✅ Application event listeners registered");
 };
 
 module.exports = registerEvents;

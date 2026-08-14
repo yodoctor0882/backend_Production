@@ -13,16 +13,25 @@ const { generateCertificateId } = require("../utils/generateCertId");
 const { calculateExpiry } = require("../utils/calculateExpiry");
 const generatePDF = require("../services/pdfService");
 
+
+const serviceFees = require("../config/serviceFees");
+// const razorpay = require("../utils/razorpay"); 
+
 // createRequest Api
 
 exports.createRequest = async (req, res) => {
-  let connection;
+  return res.status(410).json({
+    success: false,
+    message:
+      "Direct certificate request creation is disabled. Please complete payment first.",
+  });
+};
 
+// createPaymentOrder
+
+exports.createPaymentOrder = async (req, res) => {
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
-
-    const user_id = req.user.id;
+    const userId = req.user.id;
 
     const {
       doctor_id,
@@ -39,136 +48,1159 @@ exports.createRequest = async (req, res) => {
       medications,
     } = req.body;
 
-    const query = `
-      INSERT INTO certificate_requests
-      (user_id, doctor_id, certificate_type, purpose, notes,
-       full_name, dob, gender, blood_group, height, weight,
-       medical_conditions, medications, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-    `;
+    if (!doctor_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Doctor ID is required",
+      });
+    }
 
-    const [result] = await connection.query(query, [
-      user_id,
-      doctor_id,
-      certificate_type,
-      purpose,
-      notes,
-      full_name,
-      dob,
-      gender,
-      blood_group,
-      height,
-      weight,
-      medical_conditions,
-      medications,
-    ]);
+    if (!certificate_type) {
+      return res.status(400).json({
+        success: false,
+        message: "Certificate type is required",
+      });
+    }
 
-    const requestId = result.insertId;
-
-    const timelineQuery = `
-      INSERT INTO certificate_request_timeline (request_id, label, state)
-      VALUES
-      (?, 'Request submitted', 'done'),
-      (?, 'Under Verification', 'waiting')
-    `;
-
-    const [doctorRows] = await connection.query(
-      "SELECT user_id FROM doctors WHERE id = ?",
-      [doctor_id],
+    const [doctorRows] = await db.query(
+      `
+      SELECT id, user_id
+      FROM doctors
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [doctor_id]
     );
 
-    const doctorUserId = doctorRows[0]?.user_id;
+    if (doctorRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Doctor not found",
+      });
+    }
 
-    eventBus.emit(EVENTS.CERTIFICATE_REQUEST_CREATED, {
-      doctorId: doctorUserId,
-      patientName: full_name,
-      certificateType: certificate_type,
+
+    const [serviceRows] = await db.query(
+      `
+      SELECT fee
+      FROM doctor_services
+      WHERE doctor_id = ?
+        AND service = 'CERTIFICATE'
+        AND enabled = TRUE
+      LIMIT 1
+      `,
+      [doctor_id]
+    );
+
+    if (serviceRows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "This doctor does not provide certificate service",
+      });
+    }
+
+    const doctorFee = Number(serviceRows[0].fee);
+
+    const platformFee = Number(
+      serviceFees.CERTIFICATE_PLATFORM_FEE
+    );
+
+    if (!Number.isFinite(doctorFee) || doctorFee < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid doctor fee",
+      });
+    }
+
+    if (!Number.isFinite(platformFee) || platformFee < 0) {
+      return res.status(500).json({
+        success: false,
+        message: "Invalid platform fee configuration",
+      });
+    }
+
+    const totalAmount = doctorFee + platformFee;
+
+    const amountInPaise = Math.round(
+      totalAmount * 100
+    );
+
+
+    const razorpayOrder =
+      await razorpay.orders.create({
+        amount: amountInPaise,
+        currency: "INR",
+
+        receipt: `CERT-${userId}-${Date.now()}`,
+
+        notes: {
+          patient_id: String(userId),
+          doctor_id: String(doctor_id),
+          certificate_type: String(certificate_type),
+          service: "CERTIFICATE",
+        },
+      });
+
+    const formData = {
+      purpose: purpose || null,
+      notes: notes || null,
+
+      full_name: full_name || null,
+      dob: dob || null,
+      gender: gender || null,
+      blood_group: blood_group || null,
+      height: height || null,
+      weight: weight || null,
+      medical_conditions:
+        medical_conditions || null,
+      medications: medications || null,
+    };
+
+    const [paymentResult] =
+      await db.query(
+        `
+        INSERT INTO certificate_payments
+        (
+          user_id,
+          doctor_id,
+          certificate_type,
+          doctor_fee,
+          platform_fee,
+          total_amount,
+          razorpay_order_id,
+          status,
+          form_data
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'CREATED', ?)
+        `,
+        [
+          userId,
+          doctor_id,
+          certificate_type,
+          doctorFee,
+          platformFee,
+          totalAmount,
+          razorpayOrder.id,
+          JSON.stringify(formData),
+        ]
+      );
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment order created successfully",
+
+      data: {
+        paymentId: paymentResult.insertId,
+
+        razorpayKeyId:
+          process.env.RAZORPAY_KEY_ID,
+
+        orderId:
+          razorpayOrder.id,
+
+        doctorId: doctor_id,
+
+        certificateType:
+          certificate_type,
+
+        doctorFee,
+
+        platformFee,
+
+        totalAmount,
+
+        currency: "INR",
+      },
     });
 
-    await connection.query(timelineQuery, [requestId, requestId]);
+  } catch (error) {
+    console.error(
+      "createPaymentOrder error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create payment order",
+      error: error.message,
+    });
+  }
+};
+
+// verify payment
+
+const crypto = require("crypto");
+
+exports.verifyPayment = async (req, res) => {
+  let connection = null;
+
+  try {
+    const userId = req.user.id;
+
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    } = req.body;
+
+    if (
+      !razorpay_order_id ||
+      !razorpay_payment_id ||
+      !razorpay_signature
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment details are required",
+      });
+    }
+
+
+    connection = await db.getConnection();
+
+    await connection.beginTransaction();
+
+    const [paymentRows] = await connection.query(
+      `
+      SELECT *
+      FROM certificate_payments
+      WHERE razorpay_order_id = ?
+        AND user_id = ?
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [
+        razorpay_order_id,
+        userId,
+      ]
+    );
+
+    if (paymentRows.length === 0) {
+      await connection.rollback();
+
+      return res.status(404).json({
+        success: false,
+        message: "Certificate payment record not found",
+      });
+    }
+
+    const paymentRecord = paymentRows[0];
+
+    if (
+      paymentRecord.status === "PAID" &&
+      paymentRecord.certificate_request_id
+    ) {
+      await connection.commit();
+
+      return res.status(200).json({
+        success: true,
+        message: "Payment already verified",
+        requestId:
+          paymentRecord.certificate_request_id,
+      });
+    }
+
+    if (paymentRecord.status !== "CREATED") {
+      await connection.rollback();
+
+      return res.status(400).json({
+        success: false,
+        message:
+          `Payment cannot be verified because current status is ${paymentRecord.status}`,
+      });
+    }
+
+
+    const generatedSignature =
+      crypto
+        .createHmac(
+          "sha256",
+          process.env.RAZORPAY_KEY_SECRET
+        )
+        .update(
+          `${razorpay_order_id}|${razorpay_payment_id}`
+        )
+        .digest("hex");
+
+    if (
+      generatedSignature !==
+      razorpay_signature
+    ) {
+      await connection.rollback();
+
+      return res.status(400).json({
+        success: false,
+        message: "Payment signature verification failed",
+      });
+    }
+
+    const razorpayPayment =
+      await razorpay.payments.fetch(
+        razorpay_payment_id
+      );
+
+    if (!razorpayPayment) {
+      await connection.rollback();
+
+      return res.status(400).json({
+        success: false,
+        message: "Razorpay payment not found",
+      });
+    }
+
+    if (
+      razorpayPayment.order_id !==
+      paymentRecord.razorpay_order_id
+    ) {
+      await connection.rollback();
+
+      return res.status(400).json({
+        success: false,
+        message:
+          "Payment does not belong to this certificate order",
+      });
+    }
+
+    if (
+      razorpayPayment.status !==
+      "captured"
+    ) {
+      await connection.rollback();
+
+      return res.status(400).json({
+        success: false,
+        message:
+          "Payment has not been captured",
+        paymentStatus:
+          razorpayPayment.status,
+      });
+    }
+
+    const expectedAmount =
+      Math.round(
+        Number(paymentRecord.total_amount) * 100
+      );
+
+    const razorpayAmount =
+      Number(razorpayPayment.amount);
+
+    if (
+      razorpayAmount !==
+      expectedAmount
+    ) {
+      console.error(
+        "❌ Certificate payment amount mismatch",
+        {
+          expectedAmount,
+          razorpayAmount,
+          orderId:
+            razorpay_order_id,
+          paymentId:
+            razorpay_payment_id,
+        }
+      );
+
+      await connection.rollback();
+
+      return res.status(400).json({
+        success: false,
+        message:
+          "Payment amount does not match certificate amount",
+      });
+    }
+
+    let formData = {};
+
+    if (paymentRecord.form_data) {
+      try {
+        formData =
+          typeof paymentRecord.form_data ===
+          "string"
+            ? JSON.parse(
+                paymentRecord.form_data
+              )
+            : paymentRecord.form_data;
+      } catch (parseError) {
+        await connection.rollback();
+
+        return res.status(500).json({
+          success: false,
+          message:
+            "Invalid certificate form data",
+        });
+      }
+    }
+
+
+    const [requestResult] =
+      await connection.query(
+        `
+        INSERT INTO certificate_requests
+        (
+          user_id,
+          doctor_id,
+          certificate_type,
+          purpose,
+          notes,
+
+          full_name,
+          dob,
+          gender,
+          blood_group,
+          height,
+          weight,
+          medical_conditions,
+          medications,
+
+          doctor_fee,
+          platform_fee,
+          total_amount,
+
+          payment_status,
+          status,
+
+          razorpay_order_id,
+          razorpay_payment_id,
+          razorpay_signature
+        )
+        VALUES
+        (
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?,
+          'paid',
+          'pending',
+          ?, ?, ?
+        )
+        `,
+        [
+          paymentRecord.user_id,
+          paymentRecord.doctor_id,
+          paymentRecord.certificate_type,
+
+          formData.purpose || null,
+          formData.notes || null,
+
+          formData.full_name || null,
+          formData.dob || null,
+          formData.gender || null,
+          formData.blood_group || null,
+          formData.height || null,
+          formData.weight || null,
+          formData.medical_conditions || null,
+          formData.medications || null,
+
+          paymentRecord.doctor_fee,
+          paymentRecord.platform_fee,
+          paymentRecord.total_amount,
+
+          razorpay_order_id,
+          razorpay_payment_id,
+          razorpay_signature,
+        ]
+      );
+
+    const requestId = requestResult.insertId;
+
+
+    await connection.query(
+      `
+      INSERT INTO certificate_request_timeline
+      (
+        request_id,
+        label,
+        state
+      )
+      VALUES
+      (?, 'Request submitted', 'done'),
+      (?, 'Payment Completed', 'done'),
+      (?, 'Under Verification', 'waiting')
+      `,
+      [
+        requestId,
+        requestId,
+        requestId,
+      ]
+    );
+
+    const [paymentUpdate] =
+      await connection.query(
+        `
+        UPDATE certificate_payments
+        SET
+          status = 'PAID',
+          razorpay_payment_id = ?,
+          razorpay_signature = ?,
+          certificate_request_id = ?,
+          paid_at = NOW()
+        WHERE id = ?
+          AND status = 'CREATED'
+        `,
+        [
+          razorpay_payment_id,
+          razorpay_signature,
+          requestId,
+          paymentRecord.id,
+        ]
+      );
+
+    // Safety check
+    if (
+      paymentUpdate.affectedRows !== 1
+    ) {
+      throw new Error(
+        "Certificate payment could not be marked as PAID"
+      );
+    }
+
+    await connection.commit();
+    connection.release();
+    connection = null;
+
+    try {
+      const [doctorRows] =
+        await db.query(
+          `
+          SELECT user_id
+          FROM doctors
+          WHERE id = ?
+          LIMIT 1
+          `,
+          [paymentRecord.doctor_id]
+        );
+
+      const doctorUserId =
+        doctorRows[0]?.user_id;
+
+      if (doctorUserId) {
+        eventBus.emit(
+          EVENTS.CERTIFICATE_REQUEST_CREATED,
+          {
+            doctorId: doctorUserId,
+
+            patientName:
+              formData.full_name ||
+              null,
+
+            certificateType:
+              paymentRecord.certificate_type,
+          }
+        );
+      }
+    } catch (notificationError) {
+      console.error(
+        "Certificate doctor notification error:",
+        notificationError
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Payment verified and certificate request created successfully",
+
+      data: {
+        paymentId:
+          paymentRecord.id,
+
+        requestId,
+
+        paymentStatus:
+          "PAID",
+
+        requestStatus:
+          "pending",
+      },
+    });
+
+  } catch (error) {
+
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error(
+          "Certificate payment rollback error:",
+          rollbackError
+        );
+      }
+    }
+
+    console.error(
+      "❌ verifyPayment error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Payment verification failed",
+      error: error.message,
+    });
+
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+};
+
+// refundCertificatePayment
+
+
+exports.refundCertificatePayment = async (req, res) => {
+  let connection;
+
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    const { request_id } = req.body;
+
+    if (!request_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Request ID is required",
+      });
+    }
+
+    // 1. Get certificate request + payment details
+    const [requestRows] = await connection.query(
+      `
+      SELECT
+        id,
+        user_id,
+        doctor_id,
+        status,
+        payment_status,
+        total_amount,
+        razorpay_payment_id,
+        razorpay_order_id
+      FROM certificate_requests
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [request_id]
+    );
+
+    if (requestRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Certificate request not found",
+      });
+    }
+
+    const request = requestRows[0];
+
+    // 2. Check payment status
+    if (request.payment_status !== "paid") {
+      return res.status(400).json({
+        success: false,
+        message: "No successful payment found for this request",
+      });
+    }
+
+    // 3. Check Razorpay payment ID
+    if (!request.razorpay_payment_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Razorpay payment ID not found",
+      });
+    }
+
+    // 4. Make sure request is rejected
+    if (request.status !== "rejected") {
+      return res.status(400).json({
+        success: false,
+        message: "Refund is allowed only for rejected requests",
+      });
+    }
+
+    // 5. Prevent duplicate refund
+    if (request.payment_status === "refunded") {
+      return res.status(400).json({
+        success: false,
+        message: "Payment has already been refunded",
+      });
+    }
+
+    // 6. Amount in paise
+    const refundAmount = Math.round(
+      Number(request.total_amount) * 100
+    );
+
+    if (!refundAmount || refundAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid refund amount",
+      });
+    }
+
+    // 7. Create Razorpay refund
+    const refund = await razorpay.payments.refund(
+      request.razorpay_payment_id,
+      {
+        amount: refundAmount,
+        notes: {
+          request_id: String(request_id),
+          reason: "Certificate request rejected by doctor",
+        },
+      }
+    );
+
+    // 8. Update request
+    await connection.query(
+      `
+      UPDATE certificate_requests
+      SET
+        payment_status = 'refunded',
+        razorpay_refund_id = ?
+      WHERE id = ?
+      `,
+      [
+        refund.id,
+        request_id,
+      ]
+    );
+
+    // 9. Add timeline
+    await connection.query(
+      `
+      INSERT INTO certificate_request_timeline
+      (request_id, label, state)
+      VALUES (?, 'Payment Refunded', 'done')
+      `,
+      [request_id]
+    );
 
     await connection.commit();
 
-    res.status(201).json({
-      message: "Request created successfully",
-      requestId,
+    return res.status(200).json({
+      success: true,
+      message: "Payment refunded successfully",
+      requestId: request_id,
+      refundId: refund.id,
+      refundAmount: Number(request.total_amount),
     });
-  } catch (error) {
-    if (connection) await connection.rollback();
 
-    res.status(500).json({
-      message: "Failed to create request",
+  } catch (error) {
+
+    if (connection) {
+      await connection.rollback();
+    }
+
+    console.error("refundCertificatePayment error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to refund payment",
       error: error.message,
     });
+
   } finally {
-    if (connection) connection.release();
+    if (connection) {
+      connection.release();
+    }
   }
 };
 
 // ================= Upload Documents =================
 
+
 exports.uploadDocument = async (req, res) => {
+  let connection = null;
+
   try {
+    const userId = req.user.id;
     const { request_id } = req.body;
+
+    // =====================================================
+    // 1. VALIDATION
+    // =====================================================
 
     if (!request_id) {
       return res.status(400).json({
+        success: false,
         message: "Request ID is required",
       });
     }
 
-    if (!req.files || Object.keys(req.files).length === 0) {
+    if (
+      !req.files ||
+      Object.keys(req.files).length === 0
+    ) {
       return res.status(400).json({
+        success: false,
         message: "No files uploaded",
       });
     }
 
+    // =====================================================
+    // 2. REQUIRED DOCUMENTS
+    // =====================================================
+
     if (!req.files.profilePhoto) {
       return res.status(400).json({
+        success: false,
         message: "Profile photo is required",
       });
     }
 
     if (!req.files.idProof) {
       return res.status(400).json({
+        success: false,
         message: "ID proof is required",
       });
     }
 
+    // =====================================================
+    // 3. START TRANSACTION
+    // =====================================================
+
+    connection = await db.getConnection();
+
+    await connection.beginTransaction();
+
+    // =====================================================
+    // 4. GET CERTIFICATE REQUEST
+    // =====================================================
+
+    const [requestRows] =
+      await connection.query(
+        `
+        SELECT
+          id,
+          user_id,
+          doctor_id,
+          payment_status,
+          status
+        FROM certificate_requests
+        WHERE id = ?
+          AND user_id = ?
+        LIMIT 1
+        FOR UPDATE
+        `,
+        [request_id, userId]
+      );
+
+    if (requestRows.length === 0) {
+      await connection.rollback();
+
+      return res.status(404).json({
+        success: false,
+        message: "Certificate request not found",
+      });
+    }
+
+    const request = requestRows[0];
+
+    // =====================================================
+    // 5. PAYMENT CHECK
+    // =====================================================
+
+    if (request.payment_status !== "paid") {
+      await connection.rollback();
+
+      return res.status(400).json({
+        success: false,
+        message:
+          "Documents cannot be uploaded before payment is completed",
+      });
+    }
+
+
+    if (request.status !== "pending") {
+      await connection.rollback();
+
+      return res.status(400).json({
+        success: false,
+        message:
+          `Documents cannot be uploaded for request with status ${request.status}`,
+      });
+    }
+
+    // =====================================================
+    // 7. PREPARE FILES
+    // =====================================================
+
     const allFiles = [
-      ...(req.files.profilePhoto || []).map((f) => ({
-        ...f,
-        type: "profilePhoto",
-      })),
-      ...(req.files.idProof || []).map((f) => ({ ...f, type: "idProof" })),
-      ...(req.files.medicalReports || []).map((f) => ({
-        ...f,
-        type: "medicalReports",
-      })),
-      ...(req.files.prescription || []).map((f) => ({
-        ...f,
-        type: "prescription",
-      })),
+      ...(req.files.profilePhoto || []).map(
+        (file) => ({
+          ...file,
+          type: "profilePhoto",
+        })
+      ),
+
+      ...(req.files.idProof || []).map(
+        (file) => ({
+          ...file,
+          type: "idProof",
+        })
+      ),
+
+      ...(req.files.medicalReports || []).map(
+        (file) => ({
+          ...file,
+          type: "medicalReports",
+        })
+      ),
+
+      ...(req.files.prescription || []).map(
+        (file) => ({
+          ...file,
+          type: "prescription",
+        })
+      ),
     ];
 
-    const values = allFiles.map((file) => [request_id, file.path, file.type]);
+    if (allFiles.length === 0) {
+      await connection.rollback();
 
-    const query = `
-  INSERT INTO certificate_documents (request_id, file_url, doc_type)
-  VALUES ?
-`;
+      return res.status(400).json({
+        success: false,
+        message: "No valid documents found",
+      });
+    }
 
-    await db.query(query, [values]);
+    // =====================================================
+    // 8. SAVE DOCUMENTS
+    // =====================================================
 
-    res.status(201).json({
-      message: "Documents uploaded successfully",
+    const values = allFiles.map(
+      (file) => [
+        request_id,
+        file.path,
+        file.type,
+      ]
+    );
+
+    await connection.query(
+      `
+      INSERT INTO certificate_documents
+      (
+        request_id,
+        file_url,
+        doc_type
+      )
+      VALUES ?
+      `,
+      [values]
+    );
+
+    await connection.commit();
+
+    connection.release();
+    connection = null;
+
+    // =====================================================
+    // 11. SUCCESS
+    // =====================================================
+
+    return res.status(201).json({
+      success: true,
+      message: "Documents uploaded successfully.",
+
+      data: {
+        requestId: request_id,
+        status: "pending",
+      },
     });
+
   } catch (error) {
-    res.status(500).json({
-      message: "Internal server error",
+    // =====================================================
+    // ROLLBACK
+    // =====================================================
+
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error(
+          "Document upload rollback error:",
+          rollbackError
+        );
+      }
+    }
+
+    console.error(
+      "❌ Certificate document upload error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Failed to upload certificate documents",
+      error: error.message,
     });
+
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 };
+
+
+// refundCertificatePayment
+
+
+exports.refundCertificatePayment = async (req, res) => {
+  let connection;
+
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    const { request_id } = req.body;
+
+    if (!request_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Request ID is required",
+      });
+    }
+
+    // 1. Get certificate request + payment details
+    const [requestRows] = await connection.query(
+      `
+      SELECT
+        id,
+        user_id,
+        doctor_id,
+        status,
+        payment_status,
+        total_amount,
+        razorpay_payment_id,
+        razorpay_order_id
+      FROM certificate_requests
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [request_id]
+    );
+
+    if (requestRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Certificate request not found",
+      });
+    }
+
+    const request = requestRows[0];
+
+    // 2. Check payment status
+    if (request.payment_status !== "paid") {
+      return res.status(400).json({
+        success: false,
+        message: "No successful payment found for this request",
+      });
+    }
+
+    // 3. Check Razorpay payment ID
+    if (!request.razorpay_payment_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Razorpay payment ID not found",
+      });
+    }
+
+    // 4. Make sure request is rejected
+    if (request.status !== "rejected") {
+      return res.status(400).json({
+        success: false,
+        message: "Refund is allowed only for rejected requests",
+      });
+    }
+
+    // 5. Prevent duplicate refund
+    if (request.payment_status === "refunded") {
+      return res.status(400).json({
+        success: false,
+        message: "Payment has already been refunded",
+      });
+    }
+
+    // 6. Amount in paise
+    const refundAmount = Math.round(
+      Number(request.total_amount) * 100
+    );
+
+    if (!refundAmount || refundAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid refund amount",
+      });
+    }
+
+    // 7. Create Razorpay refund
+    const refund = await razorpay.payments.refund(
+      request.razorpay_payment_id,
+      {
+        amount: refundAmount,
+        notes: {
+          request_id: String(request_id),
+          reason: "Certificate request rejected by doctor",
+        },
+      }
+    );
+
+    // 8. Update request
+    await connection.query(
+      `
+      UPDATE certificate_requests
+      SET
+        payment_status = 'refunded',
+        razorpay_refund_id = ?
+      WHERE id = ?
+      `,
+      [
+        refund.id,
+        request_id,
+      ]
+    );
+
+    // 9. Add timeline
+    await connection.query(
+      `
+      INSERT INTO certificate_request_timeline
+      (request_id, label, state)
+      VALUES (?, 'Payment Refunded', 'done')
+      `,
+      [request_id]
+    );
+
+    await connection.commit();
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment refunded successfully",
+      requestId: request_id,
+      refundId: refund.id,
+      refundAmount: Number(request.total_amount),
+    });
+
+  } catch (error) {
+
+    if (connection) {
+      await connection.rollback();
+    }
+
+    console.error("refundCertificatePayment error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to refund payment",
+      error: error.message,
+    });
+
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+};
+
 
 // getMyRequests Api
 
@@ -323,7 +1355,7 @@ exports.getRequestByIdForDoctor = async (req, res) => {
     // Request check
     const [rows] = await db.query(
       `SELECT * FROM certificate_requests WHERE id = ?`,
-      [id]
+      [id],
     );
 
     if (!rows.length) {
@@ -337,7 +1369,7 @@ exports.getRequestByIdForDoctor = async (req, res) => {
        SET status = 'verification'
        WHERE id = ?
        AND status = 'pending'`,
-      [id]
+      [id],
     );
 
     if (rows[0].status === "pending") {
@@ -345,17 +1377,16 @@ exports.getRequestByIdForDoctor = async (req, res) => {
         `UPDATE certificate_request_timeline
          SET state = 'done'
          WHERE request_id = ?`,
-        [id]
+        [id],
       );
     }
 
     const [updatedRows] = await db.query(
       `SELECT * FROM certificate_requests WHERE id = ?`,
-      [id]
+      [id],
     );
 
     res.json(updatedRows[0]);
-
   } catch (error) {
     console.error("Error fetching request details:", error);
 
@@ -384,7 +1415,6 @@ exports.getDocumentsByRequestId = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 // approveRequest Api
 
@@ -574,8 +1604,8 @@ exports.approveRequest = async (req, res) => {
 
     generatedFilePath = filePath;
 
-const [updateResult] = await connection.query(
-  `UPDATE certificate_requests
+    const [updateResult] = await connection.query(
+      `UPDATE certificate_requests
    SET status = 'approved',
        certificate_id = ?,
        doctor_notes = ?,
@@ -586,16 +1616,16 @@ const [updateResult] = await connection.query(
    WHERE id = ?
    AND doctor_id = ?
    AND status = 'verification'`,
-  [
-    certificateId,
-    doctor_notes || null,
-    fitness_status,
-    expiryDate,
-    certificateFile,
-    id,
-    doctorId,
-  ],
-);
+      [
+        certificateId,
+        doctor_notes || null,
+        fitness_status,
+        expiryDate,
+        certificateFile,
+        id,
+        doctorId,
+      ],
+    );
     if (updateResult.affectedRows !== 1) {
       throw new Error("Certificate could not be approved");
     }
@@ -707,8 +1737,7 @@ exports.rejectRequest = async (req, res) => {
 
     if (result.affectedRows !== 1) {
       return res.status(409).json({
-        message:
-          "Certificate cannot be rejected",
+        message: "Certificate cannot be rejected",
       });
     }
 
@@ -758,70 +1787,6 @@ exports.rejectRequest = async (req, res) => {
     return res.status(500).json({
       message: "Server error",
     });
-  }
-};
-
-
-
-// rejectRequest Api
-
-exports.rejectRequest = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const doctorUserId = req.user.id;
-    const [doctorRows] = await db.query(
-      "SELECT id FROM doctors WHERE user_id = ?",
-      [doctorUserId],
-    );
-
-    if (!doctorRows.length) {
-      return res.status(404).json({ message: "Doctor not found" });
-    }
-
-    const doctorId = doctorRows[0].id;
-
-    const [result] = await db.query(
-      `UPDATE certificate_requests
-       SET status='rejected'
-       WHERE id=? AND doctor_id=?`,
-      [id, doctorId],
-    );
-
-    await db.query(
-      `UPDATE certificate_request_timeline
-   SET state = 'done'
-   WHERE request_id = ?`,
-      [id],
-    );
-
-    await db.query(
-      `INSERT INTO certificate_request_timeline (request_id, label, state)
-   VALUES (?, 'Request Rejected', 'done')`,
-      [id],
-    );
-
-    const [patientRows] = await db.query(
-      "SELECT id AS user_id, email FROM users WHERE id = (SELECT user_id FROM certificate_requests WHERE id = ?)",
-      [id],
-    );
-
-    const patient = patientRows[0];
-
-    eventBus.emit(EVENTS.CERTIFICATE_REJECTED, {
-      patientId: patient.user_id,
-      patientEmail: patient.email,
-    });
-
-    if (result.affectedRows === 0) {
-      return res.status(400).json({
-        message: "Reject failed (no matching record)",
-      });
-    }
-
-    res.json({ message: "Request rejected successfully" });
-  } catch (error) {
-    console.error("Rejection Error:", error);
-    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -932,4 +1897,58 @@ exports.verifyCertificate = (req, res) => {
       data: cert,
     });
   });
+};
+
+// get all doctor for certificate
+
+exports.getAllCertificateDoctors = async (req, res) => {
+  try {
+    const [doctors] = await db.query(`
+            SELECT
+                d.id AS id,
+                d.doctorName,
+                d.specialization,
+                d.experience_years,
+                d.rating,
+                dd.file_path AS profile_image,
+                ds.fee AS certificate_fee
+
+            FROM doctors d
+
+            LEFT JOIN doctor_documents dd
+                ON dd.doctor_id = d.id
+                AND dd.doc_type = 'profile'
+
+            INNER JOIN doctor_services ds
+                ON ds.doctor_id = d.id
+                AND ds.service = 'CERTIFICATE'
+                AND ds.enabled = TRUE
+
+            WHERE d.status = 'APPROVED'
+
+            AND EXISTS (
+                SELECT 1
+                FROM subscriptions s
+                WHERE s.user_id = d.user_id
+                AND s.status = 'active'
+            )
+
+            ORDER BY d.rating DESC
+
+            LIMIT 5
+        `);
+
+    return res.status(200).json({
+      success: true,
+      doctors,
+    });
+  } catch (err) {
+    console.error("getAllDoctors error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
+    });
+  }
 };
