@@ -135,6 +135,24 @@ exports.handleCertificateApproved = async (data) => {
   }
 };
 
+exports.handleCertificateRequestCreated = async (data) => {
+  try {
+    const title = "📋 New Certificate Request";
+    const message = `${data.patientName} has submitted a certificate request (${data.certificateType}) for your verification.`;
+
+    await createAppNotification({
+      userId: data.doctorId,
+      role: "doctor",
+      title,
+      message,
+    });
+
+  } catch (err) {
+    console.error("Certificate request notification error:", err);
+  }
+};
+
+
 exports.handleCertificateRejected = async (data) => {
   try {
     const title = "❌ Certificate Rejected";

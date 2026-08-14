@@ -3143,26 +3143,37 @@ exports.getDoctorProfile = async (req, res) => {
 exports.getAllDoctors = async (req, res) => {
   try {
     const [doctors] = await db.query(`
-  SELECT
-    d.id AS id,
-    d.doctorName,
-    d.specialization,
-    d.experience_years,
-    d.rating,
-    dd.file_path AS profile_image
-  FROM doctors d
-  LEFT JOIN doctor_documents dd
-    ON dd.doctor_id = d.id
-    AND dd.doc_type = 'profile'
-  WHERE d.status = 'APPROVED'
-  ORDER BY d.rating DESC
-  LIMIT 5
-`);
+      SELECT
+        d.id AS id,
+        d.doctorName,
+        d.specialization,
+        d.experience_years,
+        d.rating,
+        dd.file_path AS profile_image
+      FROM doctors d
+
+      LEFT JOIN doctor_documents dd
+        ON dd.doctor_id = d.id
+        AND dd.doc_type = 'profile'
+
+      WHERE d.status = 'APPROVED'
+
+      AND EXISTS (
+        SELECT 1
+        FROM subscriptions s
+        WHERE s.user_id = d.user_id
+          AND s.status = 'active'
+      )
+
+      ORDER BY d.rating DESC
+      LIMIT 5
+    `);
 
     return res.status(200).json({
       success: true,
       doctors,
     });
+
   } catch (err) {
     console.log(err);
 
@@ -3260,4 +3271,315 @@ exports.getDoctorVerificationStatus = async (req, res) => {
       message: "Unable to check doctor verification status.",
     });
   }
+};
+
+
+exports.getCertificateService = async (req, res) => {
+    try {
+
+        const userId = req.user.id;
+
+        // Find doctor
+        const [doctorRows] = await db.execute(
+            `SELECT id
+             FROM doctors
+             WHERE user_id = ?
+             LIMIT 1`,
+            [userId]
+        );
+
+        if (doctorRows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Doctor not found"
+            });
+        }
+
+        const doctorId = doctorRows[0].id;
+
+        // Get certificate service
+        const [serviceRows] = await db.execute(
+            `SELECT
+                id,
+                doctor_id,
+                service,
+                enabled,
+                fee,
+                instructions,
+                created_at,
+                updated_at
+             FROM doctor_services
+             WHERE doctor_id = ?
+             AND service = 'CERTIFICATE'
+             LIMIT 1`,
+            [doctorId]
+        );
+
+        // Doctor has not configured certificate service yet
+        if (serviceRows.length === 0) {
+            return res.status(200).json({
+                success: true,
+                data: {
+                    doctor_id: doctorId,
+                    service: "CERTIFICATE",
+                    enabled: false,
+                    fee: 0,
+                    instructions: null
+                }
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: serviceRows[0]
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Get certificate service error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to get certificate service"
+        });
+    }
+};
+
+exports.saveCertificateService = async (req, res) => {
+    try {
+
+        const userId = req.user.id;
+
+        const {
+            enabled,
+            fee,
+            instructions
+        } = req.body;
+
+        // Find doctor
+        const [doctorRows] = await db.execute(
+            `SELECT id
+             FROM doctors
+             WHERE user_id = ?
+             LIMIT 1`,
+            [userId]
+        );
+
+        if (doctorRows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Doctor not found"
+            });
+        }
+
+        const doctorId = doctorRows[0].id;
+
+        // Validate enabled
+        if (typeof enabled !== "boolean") {
+            return res.status(400).json({
+                success: false,
+                message: "enabled must be true or false"
+            });
+        }
+
+        // If service is enabled, fee is required
+        if (enabled === true) {
+
+            if (
+                fee === undefined ||
+                fee === null ||
+                Number(fee) <= 0
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Certificate fee must be greater than 0"
+                });
+            }
+        }
+
+        const certificateFee =
+            fee !== undefined && fee !== null
+                ? Number(fee)
+                : 0;
+
+        // Insert first time / update existing service
+        await db.execute(
+            `INSERT INTO doctor_services
+            (
+                doctor_id,
+                service,
+                enabled,
+                fee,
+                instructions
+            )
+            VALUES (?, 'CERTIFICATE', ?, ?, ?)
+
+            ON DUPLICATE KEY UPDATE
+
+                enabled = VALUES(enabled),
+                fee = VALUES(fee),
+                instructions = VALUES(instructions),
+                updated_at = CURRENT_TIMESTAMP`,
+            [
+                doctorId,
+                enabled,
+                certificateFee,
+                instructions || null
+            ]
+        );
+
+        // Return saved service
+        const [serviceRows] = await db.execute(
+            `SELECT
+                id,
+                doctor_id,
+                service,
+                enabled,
+                fee,
+                instructions,
+                created_at,
+                updated_at
+             FROM doctor_services
+             WHERE doctor_id = ?
+             AND service = 'CERTIFICATE'
+             LIMIT 1`,
+            [doctorId]
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: enabled
+                ? "Certificate service started successfully"
+                : "Certificate service updated successfully",
+            data: serviceRows[0]
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Save certificate service error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to save certificate service"
+        });
+    }
+};
+
+
+exports.toggleCertificateService = async (req, res) => {
+    try {
+
+        const userId = req.user.id;
+
+        const { enabled } = req.body;
+
+        if (typeof enabled !== "boolean") {
+            return res.status(400).json({
+                success: false,
+                message: "enabled must be true or false"
+            });
+        }
+
+        // Find doctor
+        const [doctorRows] = await db.execute(
+            `SELECT id
+             FROM doctors
+             WHERE user_id = ?
+             LIMIT 1`,
+            [userId]
+        );
+
+        if (doctorRows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Doctor not found"
+            });
+        }
+
+        const doctorId = doctorRows[0].id;
+
+        // Check certificate service
+        const [serviceRows] = await db.execute(
+            `SELECT id, fee
+             FROM doctor_services
+             WHERE doctor_id = ?
+             AND service = 'CERTIFICATE'
+             LIMIT 1`,
+            [doctorId]
+        );
+
+        if (serviceRows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Certificate service is not configured"
+            });
+        }
+
+        // Cannot enable without fee
+        if (
+            enabled === true &&
+            Number(serviceRows[0].fee) <= 0
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Please set certificate fee first"
+            });
+        }
+
+        // Update ON/OFF
+        await db.execute(
+            `UPDATE doctor_services
+             SET enabled = ?,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE doctor_id = ?
+             AND service = 'CERTIFICATE'`,
+            [
+                enabled,
+                doctorId
+            ]
+        );
+
+        // Get updated record
+        const [updatedRows] = await db.execute(
+            `SELECT
+                id,
+                doctor_id,
+                service,
+                enabled,
+                fee,
+                instructions,
+                updated_at
+             FROM doctor_services
+             WHERE doctor_id = ?
+             AND service = 'CERTIFICATE'
+             LIMIT 1`,
+            [doctorId]
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: enabled
+                ? "Certificate service enabled"
+                : "Certificate service disabled",
+            data: updatedRows[0]
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Toggle certificate service error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to update certificate service"
+        });
+    }
 };

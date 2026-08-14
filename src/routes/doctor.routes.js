@@ -16,7 +16,7 @@ const { apiLimiter } = require("../middleware/rateLimit");
 router.get(
   "/dashboard",
   verifyToken,
-  apiLimiter,  
+  apiLimiter,
   allowRoles("DOCTOR"),
   doctorController.getDashboard,
 );
@@ -27,16 +27,15 @@ router.get(
 router.get(
   "/profile",
   verifyToken,
-  apiLimiter,     
+  apiLimiter,
   allowRoles("DOCTOR"),
   doctorController.getDoctorProfile,
 );
 
-
 router.put(
   "/profile",
   verifyToken,
-  apiLimiter, 
+  apiLimiter,
   allowRoles("DOCTOR"),
   doctorController.updateDoctorProfile,
 );
@@ -101,8 +100,6 @@ router.put(
   doctorController.respondAppointment,
 );
 
-
-
 router.get(
   "/appointments/incoming",
   verifyToken,
@@ -141,48 +138,46 @@ router.get(
 );
 
 router.get(
-  "/appointments/carry-forward", 
+  "/appointments/carry-forward",
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.getCarryForwardAppointments,
 );
 
-
 router.put(
-  "/appointments/auto-accept", 
+  "/appointments/auto-accept",
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.autoAcceptAllAppointments,
 );
 
 router.put(
-  "/appointments/noShow", 
+  "/appointments/noShow",
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.markNoShow,
 );
 
 router.put(
-  "/appointments/carry-forward", 
+  "/appointments/carry-forward",
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.carryForwardRemaining,
 );
 
 router.put(
-  "/appointments/cancel-remaining", 
+  "/appointments/cancel-remaining",
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.cancelRemainingAppointments,
 );
 
 router.put(
-  "/appointments/recall/:id", 
+  "/appointments/recall/:id",
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.recallSkippedPatient,
 );
-
 
 router.post(
   "/appointments/next-token",
@@ -193,7 +188,7 @@ router.post(
 );
 
 router.put(
-  "/appointments/:id/start", 
+  "/appointments/:id/start",
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.startAppointment,
@@ -207,14 +202,14 @@ router.put(
 );
 
 router.post(
-  "/appointments/:id/summary", 
+  "/appointments/:id/summary",
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.addVisitSummary,
 );
 
 router.post(
-  "/appointments/:id/prescription", 
+  "/appointments/:id/prescription",
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.addPrescription,
@@ -298,6 +293,33 @@ router.get(
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.getDoctorVerificationStatus,
+);
+
+// getCertificateService
+
+router.get(
+  "/get-certificate",
+  verifyToken,
+  allowRoles("DOCTOR"),
+  doctorController.getCertificateService,
+);
+
+// saveCertificateService
+
+router.post(
+  "/save-certificate",
+  verifyToken,
+  allowRoles("DOCTOR"),
+  doctorController.saveCertificateService,
+);
+
+// toggleCertificateService
+
+router.patch(
+  "/certificate/toggle",
+  verifyToken,
+  allowRoles("DOCTOR"),
+  doctorController.toggleCertificateService,
 );
 
 module.exports = router;
