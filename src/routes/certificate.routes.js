@@ -155,6 +155,14 @@ router.get(
 
 /* ================= GENERIC ROUTE (ALWAYS LAST) ================= */
 
+// for certificate
+
+router.get("/allcertificate-doctors", 
+  verifyToken,
+  requireActiveUser,
+  certificateController.getAllCertificateDoctors
+);
+
 // Get certificate details by ID (Patient)
 router.get(
   "/:id",
@@ -163,9 +171,7 @@ router.get(
   certificateController.getRequestById
 );
 
-// for certificate
 
-router.get("/allcertificate-doctors", certificateController.getAllCertificateDoctors);
 
 
 module.exports = router;

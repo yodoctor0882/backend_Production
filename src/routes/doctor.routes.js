@@ -8,11 +8,14 @@ const upload = require("../middleware/upload.middleware");
 const uploadDoctorDocs = require("../middleware/uploadDoctorDocs");
 const { apiLimiter } = require("../middleware/rateLimit");
 
+const {
+  requireActiveSubscription,
+} = require("../middleware/requireActiveSubscription");
+
 // const { apiLimiter } = require("../middleware/rateLimit");
 
-// ─────────────────────────────────────────
 // Dashboard
-// ─────────────────────────────────────────
+
 router.get(
   "/dashboard",
   verifyToken,
@@ -21,9 +24,8 @@ router.get(
   doctorController.getDashboard,
 );
 
-// ─────────────────────────────────────────
 // Profile
-// ─────────────────────────────────────────
+
 router.get(
   "/profile",
   verifyToken,
@@ -40,9 +42,8 @@ router.put(
   doctorController.updateDoctorProfile,
 );
 
-// ─────────────────────────────────────────
 // Availability
-// ─────────────────────────────────────────
+
 router.put(
   "/availability",
   verifyToken,
@@ -50,9 +51,8 @@ router.put(
   doctorController.updateClinicStatus,
 );
 
-// ─────────────────────────────────────────
 // QR
-// ─────────────────────────────────────────
+
 router.get(
   "/my-qr",
   verifyToken,
@@ -60,9 +60,8 @@ router.get(
   doctorController.getMyQR,
 );
 
-// ─────────────────────────────────────────
 // Reviews
-// ─────────────────────────────────────────
+
 router.get(
   "/reviews",
   verifyToken,
@@ -70,9 +69,8 @@ router.get(
   doctorController.getDoctorReviews,
 );
 
-// ─────────────────────────────────────────
 // Manual Booking
-// ─────────────────────────────────────────
+
 router.post(
   "/manualbooking",
   verifyToken,
@@ -80,9 +78,8 @@ router.post(
   doctorController.manualVisitBooking,
 );
 
-// ─────────────────────────────────────────
 // Get Doctor By ID (for PATIENT)
-// ─────────────────────────────────────────
+
 router.get(
   "/getDoctorById/:id",
   verifyToken,
@@ -90,9 +87,8 @@ router.get(
   doctorController.getDoctorById,
 );
 
-// ─────────────────────────────────────────
 // Respond to Appointment
-// ─────────────────────────────────────────
+
 router.put(
   "/respond-appointment/:id",
   verifyToken,
@@ -222,9 +218,8 @@ router.get(
   doctorController.getPrescription,
 );
 
-// ─────────────────────────────────────────
 // Doctor Registration — Stepper
-// ─────────────────────────────────────────
+
 router.post("/register", doctorController.createStep1);
 
 router.patch(
@@ -320,6 +315,16 @@ router.patch(
   verifyToken,
   allowRoles("DOCTOR"),
   doctorController.toggleCertificateService,
+);
+
+// Manual Booking
+
+router.post(
+  "/manualbooking",
+  verifyToken,
+  allowRoles("DOCTOR"),
+  requireActiveSubscription,
+  doctorController.manualVisitBooking,
 );
 
 module.exports = router;

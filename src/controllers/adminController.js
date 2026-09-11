@@ -117,38 +117,37 @@ exports.updateDoctorStatus = async (req, res) => {
     );
 
     const [[doctorInfo]] = await connection.query(
-  `SELECT d.user_id,
+      `SELECT d.user_id,
           d.doctorName,
           u.email
    FROM doctors d
    JOIN users u ON d.user_id = u.id
    WHERE d.id = ?`,
-  [doctorId]
-);
+      [doctorId],
+    );
 
-await connection.commit();
+    await connection.commit();
 
-if (status === "APPROVED") {
-  eventBus.emit(DOCTOR_APPROVED, {
-    doctorId: doctorInfo.user_id,
-    doctorName: doctorInfo.doctorName,
-    doctorEmail: doctorInfo.email,
-  });
-}
+    if (status === "APPROVED") {
+      eventBus.emit(DOCTOR_APPROVED, {
+        doctorId: doctorInfo.user_id,
+        doctorName: doctorInfo.doctorName,
+        doctorEmail: doctorInfo.email,
+      });
+    }
 
-if (status === "REJECTED") {
-  eventBus.emit(DOCTOR_REJECTED, {
-    doctorId: doctorInfo.user_id,
-    doctorName: doctorInfo.doctorName,
-    doctorEmail: doctorInfo.email,
-    reason,
-  });
-}
+    if (status === "REJECTED") {
+      eventBus.emit(DOCTOR_REJECTED, {
+        doctorId: doctorInfo.user_id,
+        doctorName: doctorInfo.doctorName,
+        doctorEmail: doctorInfo.email,
+        reason,
+      });
+    }
 
-return res.json({
-  message: `Doctor marked as ${status}`,
-});
-
+    return res.json({
+      message: `Doctor marked as ${status}`,
+    });
   } catch (err) {
     await connection.rollback();
     res.status(500).json({
@@ -414,12 +413,7 @@ exports.verifyDoctorDocument = async (req, res) => {
       `UPDATE doctor_documents
        SET verified = ?, rejection_reason = ?
        WHERE doctor_id = ? AND doc_type = ?`,
-      [
-        verifiedValue,
-        verifiedValue === 2 ? reason : null, 
-        doctorId,
-        docType,
-      ],
+      [verifiedValue, verifiedValue === 2 ? reason : null, doctorId, docType],
     );
     return res.json({
       success: true,
@@ -447,7 +441,7 @@ exports.verifyDoctorDocument = async (req, res) => {
 // getDoctorVerification
 
 exports.getDoctorVerification = async (req, res) => {
-  const doctorId = req.params.id; 
+  const doctorId = req.params.id;
 
   try {
     // ✅ doctor by doctor.id
@@ -620,7 +614,7 @@ exports.blockUser = async (req, res) => {
 
     await db.query(
       "UPDATE users SET is_active = FALSE WHERE id = ? AND role='PATIENT'",
-      [id]
+      [id],
     );
 
     res.json({
@@ -643,7 +637,7 @@ exports.unblockUser = async (req, res) => {
 
     await db.query(
       "UPDATE users SET is_active = TRUE WHERE id = ? AND role='PATIENT'",
-      [id]
+      [id],
     );
 
     res.json({
@@ -713,7 +707,6 @@ exports.getAllAppointments = async (req, res) => {
   }
 };
 
-
 exports.forceCancelAppointment = async (req, res) => {
   try {
     const appointmentId = req.params.id;
@@ -755,8 +748,6 @@ exports.getAdminAnalytics = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-
-
 
 exports.getAllContactRequests = async (req, res) => {
   try {
@@ -866,7 +857,15 @@ exports.addLabTest = async (req, res) => {
       includes = [],
     } = req.body;
 
-    const image = `/uploads/lab-tests/${req.file.filename}`;
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Lab Test image is required",
+      });
+    }
+
+    // const image = `/uploads/lab-tests/${req.file.filename}`;
+    const image = req.file.location;
 
     const [result] = await db.query(
       `
@@ -1008,6 +1007,7 @@ exports.updateLabTest = async (req, res) => {
   try {
     console.log("FILE:", req.file);
     console.log("BODY:", req.body);
+
     const { id } = req.params;
 
     const {
@@ -1038,8 +1038,7 @@ exports.updateLabTest = async (req, res) => {
         message: "Lab Test not found",
       });
     }
-
-    const image = `/uploads/lab-tests/${req.file.filename}`;
+    const image = req.file ? req.file.location : rows[0].image;
 
     await db.query(
       `
@@ -1143,7 +1142,16 @@ exports.addLabPackage = async (req, res) => {
       fasting,
     } = req.body;
 
-    const image = `/uploads/lab-tests/${req.file.filename}`;
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Package image is required",
+      });
+    }
+
+    const image = req.file.location;
+
+    // const image = `/uploads/lab-tests/${req.file.filename}`;
 
     const [result] = await conn.query(
       `
@@ -1747,7 +1755,7 @@ exports.updateHomeCareAdminStatus = async (req, res) => {
       WHERE id = ?
       LIMIT 1
       `,
-      [id]
+      [id],
     );
 
     if (!rows.length) {
@@ -1770,7 +1778,7 @@ exports.updateHomeCareAdminStatus = async (req, res) => {
       SET status = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
       `,
-      [status, id]
+      [status, id],
     );
 
     return res.status(200).json({
@@ -1784,7 +1792,6 @@ exports.updateHomeCareAdminStatus = async (req, res) => {
         status,
       },
     });
-
   } catch (error) {
     console.error("Admin homecare status error:", error);
 
@@ -1814,7 +1821,7 @@ exports.updateHomeCareServiceStatus = async (req, res) => {
       WHERE id = ?
       LIMIT 1
       `,
-      [id]
+      [id],
     );
 
     if (!rows.length) {
@@ -1826,20 +1833,14 @@ exports.updateHomeCareServiceStatus = async (req, res) => {
 
     const currentStatus = rows[0].status;
 
-    if (
-      status === "IN_PROGRESS" &&
-      currentStatus !== "CONFIRMED"
-    ) {
+    if (status === "IN_PROGRESS" && currentStatus !== "CONFIRMED") {
       return res.status(400).json({
         success: false,
         message: `Service can only start from CONFIRMED status. Current status: ${currentStatus}`,
       });
     }
 
-    if (
-      status === "COMPLETED" &&
-      currentStatus !== "IN_PROGRESS"
-    ) {
+    if (status === "COMPLETED" && currentStatus !== "IN_PROGRESS") {
       return res.status(400).json({
         success: false,
         message: `Service can only be completed from IN_PROGRESS status. Current status: ${currentStatus}`,
@@ -1853,7 +1854,7 @@ exports.updateHomeCareServiceStatus = async (req, res) => {
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
       `,
-      [status, id]
+      [status, id],
     );
 
     return res.status(200).json({
@@ -1867,7 +1868,6 @@ exports.updateHomeCareServiceStatus = async (req, res) => {
         status,
       },
     });
-
   } catch (error) {
     console.error("Homecare service status error:", error);
 
