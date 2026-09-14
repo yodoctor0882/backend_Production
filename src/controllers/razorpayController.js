@@ -202,7 +202,8 @@ const getPlanById = (req, res) => {
 
 // --------------------------- subscriptionsController --------------------------
 
-const findPlan = (planId) =>plans.find((p) => p.id === planId || p.slug === planId);
+const findPlan = (planId) =>
+  plans.find((p) => p.id === planId || p.slug === planId);
 
 const getPlanDurationMonths = (planId) => {
   const plan = plans.find((p) => p.id === planId);
@@ -242,8 +243,14 @@ const createSubscription = async (req, res) => {
   try {
     const { planId, billing = "monthly", isUpgrade = false } = req.body;
 
+    // ================= VALIDATION =================
+
     if (!planId) {
       return badRequest(res, "planId is required");
+    }
+
+    if (!["monthly", "yearly"].includes(billing)) {
+      return badRequest(res, "Invalid billing cycle");
     }
 
     const plan = findPlan(planId);
@@ -252,56 +259,79 @@ const createSubscription = async (req, res) => {
       return notFound(res, "Plan not found");
     }
 
-    // ================= EXISTING ACTIVE/PENDING CHECK =================
-
-    const [existing] = await db.execute(
+    await db.execute(
       `
-      SELECT id
-      FROM subscriptions
+      UPDATE subscriptions
+      SET
+       status = 'cancelled',
+        updated_at = NOW()
       WHERE user_id = ?
-      AND (
-        status = 'active'
-        OR (
-          status = 'pending'
-          AND created_at >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)
-        )
-      )
-      LIMIT 1
+      AND status = 'pending'
       `,
       [req.user.id],
     );
 
+    // ================= EXISTING ACTIVE SUBSCRIPTION CHECK =================
+
+    const [existing] = await db.execute(
+      `
+  SELECT id
+  FROM subscriptions
+  WHERE user_id = ?
+  AND status = 'active'
+  AND current_period_end > NOW()
+  LIMIT 1
+  `,
+      [req.user.id],
+    );
+
+    // Normal subscription create karte waqt active subscription block
+
     if (!isUpgrade && existing.length) {
       return badRequest(
         res,
-        "User already has an active or pending subscription",
+        "You already have an active subscription. Please use the upgrade option to change your plan.",
       );
     }
+
+    // ================= UPGRADE CHECK =================
 
     if (isUpgrade) {
       const [activeRows] = await db.execute(
         `
-    SELECT *
-    FROM subscriptions
-    WHERE user_id = ?
-    AND status = 'active'
-    LIMIT 1
-    `,
+        SELECT *
+        FROM subscriptions
+        WHERE user_id = ?
+        AND status = 'active'
+        ORDER BY current_period_end DESC
+        LIMIT 1
+        `,
         [req.user.id],
       );
 
       const activeSub = activeRows[0];
 
-      if (activeSub?.upgrade_status === "scheduled") {
+      if (!activeSub) {
+        return badRequest(
+          res,
+          "You do not have an active subscription to upgrade",
+        );
+      }
+
+      if (activeSub.upgrade_status === "scheduled") {
         return badRequest(
           res,
           "You already have a pending upgrade. Please wait until it becomes active.",
         );
       }
+
+      // Same plan upgrade block
+      if (activeSub.plan_id === plan.id) {
+        return badRequest(res, "You are already subscribed to this plan");
+      }
     }
 
-    
-    // ================= PLAN CONFIG =================
+    // ================= BILLING =================
 
     const isYearly = billing === "yearly";
 
@@ -310,13 +340,21 @@ const createSubscription = async (req, res) => {
       : plan.razorpay?.monthly_plan_id;
 
     if (!rzpPlanId) {
-      return error(res, "Razorpay plan configuration missing", 500);
+      return error(res, `Razorpay ${billing} plan configuration missing`, 500);
     }
 
-    const subscriptionAmount =
-      plan.totalPrice || plan.yearlyPrice || plan.monthlyPrice;
+    // Correct amount according to billing
+    const subscriptionAmount = isYearly ? plan.yearlyPrice : plan.monthlyPrice;
 
-    // ================= CREATE RAZORPAY SUB =================
+    if (!subscriptionAmount) {
+      return error(
+        res,
+        `Price configuration missing for ${billing} billing`,
+        500,
+      );
+    }
+
+    // ================= CREATE RAZORPAY SUBSCRIPTION =================
 
     let rzpSubscription;
 
@@ -326,9 +364,10 @@ const createSubscription = async (req, res) => {
         customer_notify: 1,
         quantity: 1,
         total_count: 1,
+
         notes: {
-          userId: req.user.id,
-          planId: plan.id,
+          userId: String(req.user.id),
+          planId: String(plan.id),
           planName: plan.name,
           billing,
           isUpgrade: isUpgrade ? "1" : "0",
@@ -337,17 +376,19 @@ const createSubscription = async (req, res) => {
     } catch (rzpErr) {
       console.error("[Razorpay Subscription Create Error]", rzpErr);
 
+      // Production me mock subscription mat banao
       if (process.env.NODE_ENV === "production") {
         return error(res, "Failed to create Razorpay subscription", 500);
       }
 
+      // Development only
       rzpSubscription = {
         id: `sub_mock_${uuidv4().replace(/-/g, "").slice(0, 14)}`,
         status: "created",
       };
     }
 
-    // ================= SAVE DB =================
+    // ================= SAVE LOCAL SUBSCRIPTION =================
 
     const localSubId = `sub_${uuidv4().replace(/-/g, "").slice(0, 12)}`;
 
@@ -364,7 +405,7 @@ const createSubscription = async (req, res) => {
         status,
         rzp_subscription_id
       )
-      VALUES(?,?,?,?,?,?,?,?,?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         localSubId,
@@ -379,10 +420,13 @@ const createSubscription = async (req, res) => {
       ],
     );
 
+    // ================= RESPONSE =================
+
     return created(
       res,
       {
         subscription_id: rzpSubscription.id,
+
         local_subscription_id: localSubId,
 
         razorpay_key: process.env.RAZORPAY_KEY_ID,
@@ -391,14 +435,14 @@ const createSubscription = async (req, res) => {
           id: plan.id,
           name: plan.name,
           amount: subscriptionAmount,
-          currency: plan.currency,
+          currency: plan.currency || "INR",
           billing,
         },
 
         prefill: {
-          name: req.user.name,
-          email: req.user.email,
-          contact: req.user.phone,
+          name: req.user.name || "",
+          email: req.user.email || "",
+          contact: req.user.phone || "",
         },
       },
       "Subscription created successfully",
@@ -774,20 +818,131 @@ const verifySubscription = async (req, res) => {
   }
 };
 
+const upgradeSubscription = async (req, res) => {
+  try {
+    const { newPlanId } = req.body;
+
+    if (!newPlanId) {
+      return badRequest(res, "newPlanId is required");
+    }
+
+    // Find logged-in doctor's active subscription automatically
+    const [rows] = await db.execute(
+      `
+      SELECT *
+      FROM subscriptions
+      WHERE user_id = ?
+      AND status = 'active'
+      ORDER BY current_period_end DESC
+      LIMIT 1
+      `,
+      [req.user.id],
+    );
+
+    if (!rows.length) {
+      return badRequest(
+        res,
+        "No active subscription found. Please activate a plan first.",
+      );
+    }
+
+    const sub = rows[0];
+
+    const newPlan = findPlan(newPlanId);
+
+    if (!newPlan) {
+      return notFound(res, "New plan not found");
+    }
+
+    if (sub.plan_id === newPlan.id) {
+      return badRequest(res, "Already on this plan");
+    }
+
+    if (
+      sub.upgrade_status === "scheduled" &&
+      sub.scheduled_plan_id === newPlan.id
+    ) {
+      return badRequest(res, "This upgrade is already scheduled");
+    }
+
+    if (sub.upgrade_status === "scheduled") {
+      return badRequest(
+        res,
+        "You already have a pending upgrade. Please wait until it becomes active.",
+      );
+    }
+
+    const newAmount =
+      sub.billing_cycle === "yearly"
+        ? newPlan.totalPrice || newPlan.yearlyPrice || 0
+        : newPlan.totalPrice || newPlan.monthlyPrice || 0;
+
+    await db.execute(
+      `
+  UPDATE subscriptions
+  SET
+    scheduled_plan_id = ?,
+    scheduled_plan_name = ?,
+    scheduled_amount = ?,
+    scheduled_activation_date = current_period_end,
+    upgrade_status = 'scheduled',
+    updated_at = NOW()
+  WHERE id = ?
+  `,
+      [newPlan.id, newPlan.name, newAmount, sub.id],
+    );
+
+    const [updatedRows] = await db.execute(
+      `
+        SELECT *
+        FROM subscriptions
+        WHERE id = ?
+        LIMIT 1
+        `,
+      [sub.id],
+    );
+
+    return success(
+      res,
+      {
+        subscription: updatedRows[0],
+      },
+      `${newPlan.name} plan has been scheduled and will activate when your current plan expires`,
+    );
+  } catch (err) {
+    console.error("[upgradeSubscription]", err);
+
+    return error(res, "Failed to upgrade subscription", 500);
+  }
+};
+
 const getActiveSubscription = async (req, res) => {
   try {
     const [rows] = await db.execute(
       `
-SELECT *
-FROM subscriptions
-WHERE user_id = ?
-AND status = 'active'
-ORDER BY current_period_end DESC
-LIMIT 1
-  `,
+      SELECT *
+      FROM subscriptions
+      WHERE user_id = ?
+      ORDER BY
+        CASE
+          WHEN status = 'active'
+            AND current_period_end > NOW() THEN 1
+
+          WHEN status = 'pending' THEN 2
+
+          WHEN status = 'completed' THEN 3
+
+          WHEN status = 'cancelled' THEN 4
+
+          ELSE 5
+        END,
+        updated_at DESC
+      LIMIT 1
+      `,
       [req.user.id],
     );
 
+    // New doctor — no subscription
     if (!rows.length) {
       return success(
         res,
@@ -795,7 +950,7 @@ LIMIT 1
           hasSubscription: false,
           subscription: null,
         },
-        "No active subscription",
+        "No subscription found",
       );
     }
 
@@ -805,14 +960,15 @@ LIMIT 1
         hasSubscription: true,
         subscription: rows[0],
       },
-      "Active subscription fetched",
+      "Subscription fetched successfully",
     );
   } catch (err) {
     console.error("[getActiveSubscription]", err);
 
-    return error(res, "Failed to fetch active subscription", 500);
+    return error(res, "Failed to fetch subscription", 500);
   }
 };
+
 
 const getAllSubscriptions = async (req, res) => {
   try {
@@ -968,98 +1124,7 @@ const cancelSubscription = async (req, res) => {
   }
 };
 
-const upgradeSubscription = async (req, res) => {
-  try {
-    const { newPlanId } = req.body;
 
-    if (!newPlanId) {
-      return badRequest(res, "newPlanId is required");
-    }
-
-    const [rows] = await db.execute(
-      `
-      SELECT *
-      FROM subscriptions
-      WHERE id = ?
-      AND user_id = ?
-      LIMIT 1
-      `,
-      [req.params.id, req.user.id],
-    );
-
-    if (!rows.length) {
-      return notFound(res, "Subscription not found");
-    }
-
-    const sub = rows[0];
-
-    const newPlan = findPlan(newPlanId);
-
-    if (!newPlan) {
-      return notFound(res, "New plan not found");
-    }
-
-    if (sub.plan_id === newPlan.id) {
-      return badRequest(res, "Already on this plan");
-    }
-
-    if (
-      sub.upgrade_status === "scheduled" &&
-      sub.scheduled_plan_id === newPlan.id
-    ) {
-      return badRequest(res, "This upgrade is already scheduled");
-    }
-
-    if (sub.upgrade_status === "scheduled") {
-      return badRequest(
-        res,
-        "You already have a pending upgrade. Please wait until it becomes active.",
-      );
-    }
-
-    const newAmount =
-      sub.billing_cycle === "yearly"
-        ? newPlan.totalPrice || newPlan.yearlyPrice || 0
-        : newPlan.totalPrice || newPlan.monthlyPrice || 0;
-
-    await db.execute(
-      `
-  UPDATE subscriptions
-  SET
-    scheduled_plan_id = ?,
-    scheduled_plan_name = ?,
-    scheduled_amount = ?,
-    scheduled_activation_date = current_period_end,
-    upgrade_status = 'scheduled',
-    updated_at = NOW()
-  WHERE id = ?
-  `,
-      [newPlan.id, newPlan.name, newAmount, sub.id],
-    );
-
-    const [updatedRows] = await db.execute(
-      `
-        SELECT *
-        FROM subscriptions
-        WHERE id = ?
-        LIMIT 1
-        `,
-      [sub.id],
-    );
-
-    return success(
-      res,
-      {
-        subscription: updatedRows[0],
-      },
-      `${newPlan.name} plan has been scheduled and will activate when your current plan expires`,
-    );
-  } catch (err) {
-    console.error("[upgradeSubscription]", err);
-
-    return error(res, "Failed to upgrade subscription", 500);
-  }
-};
 
 // ----------------------------------- usersController ----------------------------------
 

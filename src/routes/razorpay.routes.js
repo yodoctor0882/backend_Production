@@ -144,4 +144,11 @@ router.post(
   razorpayController.verifyLabPayment,
 );
 
+router.post(
+  "/subscriptions/upgrade",
+  verifyToken,
+  paymentLimiter,
+  razorpayController.upgradeSubscription,
+);
+
 module.exports = router;
