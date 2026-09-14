@@ -50,8 +50,11 @@ exports.login = async (req, res) => {
   }
 
   try {
+    // FIND USER
+
     const [users] = await db.query(
-      `SELECT id,
+      `SELECT
+          id,
           email,
           mobile,
           password,
@@ -60,12 +63,16 @@ exports.login = async (req, res) => {
           is_deleted,
           failed_attempts,
           lock_until
-   FROM users
-   WHERE email = ? OR mobile = ?`,
+       FROM users
+       WHERE email = ? OR mobile = ?
+       LIMIT 1`,
       [identifier, identifier],
     );
 
+    // USER NOT FOUND
+
     if (users.length === 0) {
+      // Prevent timing-based user enumeration
       await bcrypt.compare(
         password,
         "$2b$12$C6UzMDM.H6dfI/f/IKcEeOeWZqR/3Gzdh0dX8GZFODdgNpTiFqouy",
@@ -78,18 +85,26 @@ exports.login = async (req, res) => {
     }
 
     const user = users[0];
+
+    // ACCOUNT LOCK CHECK
+
     if (user.lock_until && new Date(user.lock_until) > new Date()) {
       return res.status(423).json({
         success: false,
         message: "Account locked. Try again after 24 hours.",
       });
     }
+
+    // ACTIVE CHECK
+
     if (user.is_active === 0) {
       return res.status(403).json({
         success: false,
         message: "Account inactive",
       });
     }
+
+    // DELETED CHECK
 
     if (user.is_deleted === 1) {
       return res.status(403).json({
@@ -98,10 +113,13 @@ exports.login = async (req, res) => {
           "Your account has been deleted. Please contact support if you want to restore it.",
       });
     }
+
+    // PASSWORD CHECK
+
     const match = await bcrypt.compare(password, user.password);
 
     if (!match) {
-      const attempts = user.failed_attempts + 1;
+      const attempts = (user.failed_attempts || 0) + 1;
 
       if (attempts >= 5) {
         await db.query(
@@ -117,20 +135,23 @@ exports.login = async (req, res) => {
           message:
             "Account locked due to multiple failed attempts. Try again after 24 hours.",
         });
-      } else {
-        await db.query(
-          `UPDATE users
-           SET failed_attempts = ?
-           WHERE id = ?`,
-          [attempts, user.id],
-        );
-
-        return res.status(401).json({
-          success: false,
-          message: "Invalid credentials",
-        });
       }
+
+      await db.query(
+        `UPDATE users
+         SET failed_attempts = ?
+         WHERE id = ?`,
+        [attempts, user.id],
+      );
+
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
     }
+
+    // PASSWORD IS CORRECT
+
     await db.query(
       `UPDATE users
        SET failed_attempts = 0,
@@ -139,7 +160,11 @@ exports.login = async (req, res) => {
       [user.id],
     );
 
+    // ROLE
+
     const role = user.role?.trim().toUpperCase();
+
+    // PORTAL VALIDATION
 
     if (portal === "DOCTOR" && role !== "DOCTOR") {
       return res.status(403).json({
@@ -154,9 +179,240 @@ exports.login = async (req, res) => {
         message: "Please use doctor login page",
       });
     }
-    if (user.role?.trim().toUpperCase() === "DOCTOR") {
+
+    // DOCTOR PROFILE CHECK
+
+    if (role === "DOCTOR") {
       const [[doctor]] = await db.query(
-        `SELECT status, current_step FROM doctors WHERE user_id = ?`,
+        `SELECT
+            status,
+            current_step
+         FROM doctors
+         WHERE user_id = ?`,
+        [user.id],
+      );
+
+      if (!doctor) {
+        return res.status(403).json({
+          success: false,
+          message: "Doctor profile not found. Contact admin.",
+        });
+      }
+    }
+
+    // EMAIL OTP
+
+    if (!identifier.includes("@")) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Email OTP is currently required for login. Mobile OTP will be added later.",
+      });
+    }
+
+    // CHECK USER EMAIL
+
+    if (!user.email) {
+      return res.status(400).json({
+        success: false,
+        message: "No email address is registered with this account",
+      });
+    }
+
+    // GENERATE OTP
+
+    const { otp, verificationId } = await createEmailOTP(user.id);
+
+    // SEND OTP TO EMAIL
+
+    console.log("OTP CREATED:", otp);
+console.log("VERIFICATION ID:", verificationId);
+
+    await sendLoginOTPEmail(user.email, otp);
+
+    // MASK EMAIL
+
+    const [emailName, emailDomain] = user.email.split("@");
+
+    let maskedEmail;
+
+    if (emailName.length <= 2) {
+      maskedEmail = `${emailName[0]}***@${emailDomain}`;
+    } else {
+      maskedEmail = `${emailName.substring(0, 2)}***@${emailDomain}`;
+    }
+    // IMPORTANT
+
+    return res.status(200).json({
+      success: true,
+      requiresOtp: true,
+
+      message: "OTP sent to your registered email",
+
+      verificationId,
+
+      channel: "EMAIL",
+
+      destination: maskedEmail,
+
+      expiresIn: 300,
+    });
+  } catch (err) {
+    console.error("LOGIN ERROR:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message,
+    });
+  }
+};
+
+// verifyLoginOTP
+
+exports.verifyLoginOTP = async (req, res) => {
+  const { verificationId, otp } = req.body;
+
+  // ================= VALIDATION =================
+
+  if (!verificationId || !otp) {
+    return res.status(400).json({
+      success: false,
+      message: "Verification ID and OTP are required",
+    });
+  }
+
+  if (!/^\d{6}$/.test(String(otp))) {
+    return res.status(400).json({
+      success: false,
+      message: "Please enter a valid 6-digit OTP",
+    });
+  }
+
+  try {
+    // ================= FIND OTP =================
+
+    const [[otpRecord]] = await db.query(
+      `SELECT
+          id,
+          user_id,
+          otp_hash,
+          expires_at,
+          verified_at
+       FROM otp_verifications
+       WHERE verification_id = ?
+         AND purpose = 'LOGIN'
+         AND channel = 'EMAIL'
+       LIMIT 1`,
+      [verificationId],
+    );
+
+    if (!otpRecord) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP verification request",
+      });
+    }
+
+    // ================= OTP ALREADY USED =================
+
+    if (otpRecord.verified_at) {
+      return res.status(400).json({
+        success: false,
+        message: "This OTP has already been used",
+      });
+    }
+
+    // ================= OTP EXPIRED =================
+
+    if (new Date(otpRecord.expires_at) < new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP has expired",
+      });
+    }
+
+    // ================= VERIFY OTP =================
+
+    const otpMatch = await bcrypt.compare(
+      String(otp),
+      otpRecord.otp_hash,
+    );
+
+    if (!otpMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid OTP",
+      });
+    }
+
+    // ================= MARK OTP VERIFIED =================
+
+    const [otpUpdate] = await db.query(
+      `UPDATE otp_verifications
+       SET verified_at = NOW()
+       WHERE id = ?
+         AND verified_at IS NULL`,
+      [otpRecord.id],
+    );
+
+    if (otpUpdate.affectedRows === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP has already been used",
+      });
+    }
+
+    // ================= GET USER =================
+
+    const [[user]] = await db.query(
+      `SELECT
+          id,
+          email,
+          mobile,
+          role,
+          is_active,
+          is_deleted
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [otpRecord.user_id],
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // ================= FINAL SECURITY CHECK =================
+
+    if (user.is_active === 0) {
+      return res.status(403).json({
+        success: false,
+        message: "Account inactive",
+      });
+    }
+
+    if (user.is_deleted === 1) {
+      return res.status(403).json({
+        success: false,
+        message: "Account has been deleted",
+      });
+    }
+
+    const role = user.role?.trim().toUpperCase();
+
+    // =====================================================
+    // DOCTOR FLOW
+    // =====================================================
+
+    if (role === "DOCTOR") {
+      const [[doctor]] = await db.query(
+        `SELECT status, current_step
+         FROM doctors
+         WHERE user_id = ?`,
         [user.id],
       );
 
@@ -167,14 +423,22 @@ exports.login = async (req, res) => {
         });
       }
 
+      // JWT
+
       const token = jwt.sign(
         {
           id: user.id,
           role: user.role,
+          email: user.email,
         },
         process.env.JWT_SECRET,
-        { expiresIn: process.env.JWT_EXPIRES_IN || "1d" },
+        {
+          expiresIn: process.env.JWT_EXPIRES_IN || "1d",
+        },
       );
+
+      // IN_PROGRESS
+
       if (doctor.status === "IN_PROGRESS") {
         return res.status(200).json({
           success: true,
@@ -182,9 +446,13 @@ exports.login = async (req, res) => {
           redirect: "resume",
           nextStep: doctor.current_step + 1,
           status: doctor.status,
-          data: { token },
+          data: {
+            token,
+          },
         });
       }
+
+      // PENDING
 
       if (doctor.status === "PENDING") {
         return res.status(200).json({
@@ -192,61 +460,95 @@ exports.login = async (req, res) => {
           message: "Profile under verification",
           redirect: "waiting-approval",
           status: doctor.status,
-          data: { token },
+          data: {
+            token,
+          },
         });
       }
+
+      // APPROVED
+
       if (doctor.status === "APPROVED") {
         return res.status(200).json({
           success: true,
           message: "Login successful",
           redirect: "dashboard",
           status: doctor.status,
-          data: { token },
+          data: {
+            token,
+          },
         });
       }
+
+      return res.status(403).json({
+        success: false,
+        message: "Doctor account is not allowed to login",
+      });
     }
 
-    if (user.role?.trim().toUpperCase() === "PATIENT") {
+    // =====================================================
+    // PATIENT FLOW
+    // =====================================================
+
+    if (role === "PATIENT") {
       const token = jwt.sign(
         {
           id: user.id,
           role: user.role,
+          email: user.email,
         },
         process.env.JWT_SECRET,
-        { expiresIn: process.env.JWT_EXPIRES_IN || "1d" },
+        {
+          expiresIn: process.env.JWT_EXPIRES_IN || "1d",
+        },
       );
 
       return res.status(200).json({
         success: true,
         message: "Login successful",
         redirect: "dashboard",
-        data: { token },
+        data: {
+          token,
+        },
       });
     }
-    if (user.role?.trim().toUpperCase() === "ADMIN") {
+
+    // =====================================================
+    // ADMIN FLOW
+    // =====================================================
+
+    if (role === "ADMIN") {
       const token = jwt.sign(
         {
           id: user.id,
           role: user.role,
+          email: user.email,
         },
         process.env.JWT_SECRET,
-        { expiresIn: process.env.JWT_EXPIRES_IN || "1d" },
+        {
+          expiresIn: process.env.JWT_EXPIRES_IN || "1d",
+        },
       );
 
       return res.status(200).json({
         success: true,
         message: "Admin login successful",
         redirect: "admin-dashboard",
-        data: { token },
+        data: {
+          token,
+        },
       });
     }
+
+    // ================= INVALID ROLE =================
 
     return res.status(403).json({
       success: false,
       message: "Invalid role",
     });
+
   } catch (err) {
-    console.error("LOGIN ERROR:", err);
+    console.error("VERIFY LOGIN OTP ERROR:", err);
 
     return res.status(500).json({
       success: false,

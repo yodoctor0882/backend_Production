@@ -11,7 +11,8 @@ router.post("/verify-reset", authLimiter,authController.verifyReset);
 router.post("/reset-password", authLimiter,authController.resetPassword);
 
 // verifyOtp
-// router.post("/verify-otp", authController.verifyOtp);
+
+router.post("/verify-login-otp", authLimiter, authController.verifyLoginOTP);
 
 // PROFILE IMAGE UPLOAD
 router.post(
