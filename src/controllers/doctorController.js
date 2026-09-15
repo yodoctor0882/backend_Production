@@ -15,6 +15,9 @@ const uploadDoctorDocs = require("../middleware/uploadDoctorDocs");
 const { sendEmail } = require("../utils/email.service");
 const { createNotification } = require("../utils/patientNotification");
 
+const generatePDF = require("../services/pdfService");
+const generatePrescriptionHTML = require("../utils/generatePrescriptionHTML");
+
 // PersonalDetails createStep1
 
 exports.createStep1 = async (req, res) => {
@@ -2011,15 +2014,23 @@ exports.manualVisitBooking = async (req, res) => {
 
     const doctorId = doc.id;
 
-    const { appointmentType, slot, patientName, patientMobile, patientAge } =
-      req.body;
-
+    const {
+      appointmentType,
+      slot,
+      patientName,
+      patientMobile,
+      patientAge,
+      patientGender,
+    } = req.body;
     if (
       !patientName ||
       !patientMobile ||
-      !["MORNING", "EVENING"].includes(slot)
+      !patientGender ||
+      !["MORNING", "EVENING"].includes(slot) ||
+      !["MALE", "FEMALE", "OTHER"].includes(patientGender)
     ) {
       await connection.rollback();
+
       return res.status(400).json({
         message: "Invalid request data",
       });
@@ -2035,6 +2046,10 @@ exports.manualVisitBooking = async (req, res) => {
     const appointmentDate = getTodayDate();
 
     const MAX_TOKENS_PER_SHIFT = 50;
+
+    // -------------------------
+    // 1️⃣ Doctor check (FIXED)
+    // -------------------------
     const [[doctor]] = await connection.query(
       `SELECT id
        FROM doctors
@@ -2049,6 +2064,9 @@ exports.manualVisitBooking = async (req, res) => {
       throw new Error("Doctor is not available for booking");
     }
 
+    // -------------------------
+    // 2️⃣ Availability
+    // -------------------------
     const daysMap = {
       0: "Sun",
       1: "Mon",
@@ -2095,6 +2113,10 @@ exports.manualVisitBooking = async (req, res) => {
 
     const now = new Date();
     const currentHHMM = now.getHours() * 60 + now.getMinutes();
+
+    // -------------------------
+    // Slot validation
+    // -------------------------
     if (slot === "MORNING" && (!morningStart || !morningEnd)) {
       throw new Error("Doctor not available in morning");
     }
@@ -2103,6 +2125,9 @@ exports.manualVisitBooking = async (req, res) => {
       throw new Error("Doctor not available in evening");
     }
 
+    // -------------------------
+    // Cutoff
+    // -------------------------
     if (slot === "MORNING") {
       if (currentHHMM >= morningEnd - 10) {
         throw new Error("Morning booking closed");
@@ -2115,6 +2140,9 @@ exports.manualVisitBooking = async (req, res) => {
       }
     }
 
+    // -------------------------
+    // Token check
+    // -------------------------
     const [[row]] = await connection.query(
       `SELECT COUNT(*) AS totalTokens,
               MAX(token_number) AS lastToken
@@ -2132,13 +2160,20 @@ exports.manualVisitBooking = async (req, res) => {
 
     const nextToken = (row.lastToken || 0) + 1;
 
+    // -------------------------
+    // Insert walk-in
+    // -------------------------
     const [walkinResult] = await connection.query(
-      `INSERT INTO walkin_patients (name, mobile, age)
-       VALUES (?, ?, ?)`,
-      [patientName, patientMobile, patientAge || null],
+      `INSERT INTO walkin_patients (name, mobile, age, gender) 
+   VALUES (?, ?, ?, ?)`,
+      [patientName, patientMobile, patientAge || null, patientGender || null],
     );
 
     const walkinPatientId = walkinResult.insertId;
+
+    // -------------------------
+    // Insert appointment
+    // -------------------------
     const [appointmentResult] = await connection.query(
       `INSERT INTO appointments
        (appointment_type, doctor_id, walkin_patient_id,
@@ -2417,17 +2452,20 @@ exports.skipAppointment = async (req, res) => {
   const { id } = req.params;
 
   try {
-    // ✅ FIX
+    // Find doctor
     const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
       userId,
     ]);
 
     if (!doc) {
-      return res.status(404).json({ message: "Doctor not found" });
+      return res.status(404).json({
+        message: "Doctor not found",
+      });
     }
 
     const doctorId = doc.id;
 
+    // Skip only doctor's current IN_PROGRESS appointment
     const [result] = await db.query(
       `UPDATE appointments
        SET status = 'SKIPPED'
@@ -2438,12 +2476,27 @@ exports.skipAppointment = async (req, res) => {
     );
 
     if (result.affectedRows === 0) {
-      return res.status(400).json({ message: "Cannot skip appointment" });
+      return res.status(400).json({
+        message: "Cannot skip appointment",
+      });
     }
 
-    res.json({ message: "Appointment skipped" });
+    // Delete prescription created during incomplete consultation
+    await db.query(
+      `DELETE FROM visit_summaries
+       WHERE appointment_id = ?`,
+      [id],
+    );
+
+    return res.json({
+      message: "Appointment skipped and prescription removed",
+    });
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    console.error("Skip Appointment Error:", err);
+
+    return res.status(500).json({
+      message: "Server error",
+    });
   }
 };
 
@@ -3539,6 +3592,614 @@ exports.toggleCertificateService = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to update certificate service",
+    });
+  }
+};
+
+// getPrescription
+exports.getPrescription = async (req, res) => {
+  const userId = req.user.id;
+  const userRole = req.user.role;
+  const { id: appointmentId } = req.params;
+
+  try {
+    
+    // GET PRESCRIPTION
+    
+
+    const [[data]] = await db.query(
+      `
+      SELECT
+        vs.id AS prescription_id,
+        vs.appointment_id,
+
+        -- Prescription data
+        vs.symptoms,
+        vs.diagnosis,
+        vs.medicines,
+        vs.tests,
+        vs.advice,
+
+        vs.follow_up_after,
+        vs.follow_up_date,
+        vs.follow_up_notes,
+
+        -- Appointment
+        a.appointment_date,
+        a.appointment_slot,
+        a.token_number,
+        a.doctor_id AS appointment_doctor_id,
+
+        -- Normal Patient
+        p.id AS patient_id,
+        p.user_id AS patient_user_id,
+        p.fullName AS patient_name,
+
+        TIMESTAMPDIFF(
+          YEAR,
+          p.dob,
+          CURDATE()
+        ) AS patient_age,
+
+        p.gender AS patient_gender,
+        p.phone AS patient_phone,
+
+        -- Family Member
+        fm.id AS family_member_id,
+        fm.full_name AS family_member_name,
+
+        TIMESTAMPDIFF(
+          YEAR,
+          fm.dob,
+          CURDATE()
+        ) AS family_member_age,
+
+        fm.gender AS family_member_gender,
+
+        -- Main patient of family member
+        family_patient.id AS family_patient_id,
+        family_patient.user_id AS family_patient_user_id,
+        family_patient.phone AS family_member_phone,
+
+        -- Walk-in Patient
+        wp.id AS walkin_patient_id,
+        wp.name AS walkin_patient_name,
+        wp.age AS walkin_patient_age,
+        wp.gender AS walkin_patient_gender,
+        wp.mobile AS walkin_patient_phone,
+
+        -- Doctor
+        d.id AS doctor_id,
+        d.user_id AS doctor_user_id,
+        d.doctorName AS doctor_name,
+        d.specialization AS doctor_specialization,
+        d.licenseNumber AS doctor_registration,
+        d.degree AS doctor_degree,
+
+        -- Doctor Clinic
+        dc.clinic_name AS clinic_name,
+        dc.address AS clinic_address,
+        dc.city AS clinic_city,
+        dc.state AS clinic_state,
+        dc.pincode AS clinic_pincode
+
+      FROM visit_summaries vs
+
+      JOIN appointments a
+        ON a.id = vs.appointment_id
+
+      -- Normal registered patient
+      LEFT JOIN patients p
+        ON a.patient_id = p.user_id
+
+      -- Family member
+      LEFT JOIN family_members fm
+        ON a.family_member_id = fm.id
+
+      -- Main patient of family member
+      LEFT JOIN patients family_patient
+        ON fm.patient_id = family_patient.id
+
+      -- Walk-in patient
+      LEFT JOIN walkin_patients wp
+        ON a.walkin_patient_id = wp.id
+
+      -- Doctor
+      LEFT JOIN doctors d
+        ON d.id = a.doctor_id
+
+      -- Doctor Clinic
+      LEFT JOIN doctor_clinics dc
+        ON dc.doctor_id = d.id
+
+      WHERE vs.appointment_id = ?
+      `,
+      [appointmentId],
+    );
+
+    
+    // PRESCRIPTION NOT FOUND
+    
+
+    if (!data) {
+      return res.status(404).json({
+        message: "Prescription not found",
+      });
+    }
+
+    if (userRole === "DOCTOR") {
+
+      if (Number(data.doctor_user_id) !== Number(userId)) {
+        return res.status(403).json({
+          message: "You are not authorized to view this prescription",
+        });
+      }
+    }
+    
+    else if (userRole === "PATIENT") {
+      const isOwnPrescription =
+  Number(data.patient_user_id) === Number(userId);
+
+      const isFamilyPrescription =
+        Number(data.family_patient_id) === Number(userId);
+
+      if (!isOwnPrescription && !isFamilyPrescription) {
+        return res.status(403).json({
+          message: "You are not authorized to view this prescription",
+        });
+      }
+    }
+
+    else {
+      return res.status(403).json({
+        message: "You are not authorized to view prescriptions",
+      });
+    }
+
+    const parseJSON = (value) => {
+      if (!value) return [];
+
+      if (typeof value === "object") {
+        return value;
+      }
+
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
+      }
+    };
+  
+    const response = {
+      ...data,
+
+      symptoms: parseJSON(data.symptoms),
+      diagnosis: parseJSON(data.diagnosis),
+      medicines: parseJSON(data.medicines),
+      tests: parseJSON(data.tests),
+      advice: parseJSON(data.advice),
+
+      patient: {
+        id:
+          data.patient_id ||
+          data.family_member_id ||
+          data.walkin_patient_id ||
+          null,
+
+        name:
+          data.patient_name ||
+          data.family_member_name ||
+          data.walkin_patient_name ||
+          "Unknown",
+
+        age:
+          data.patient_age ||
+          data.family_member_age ||
+          data.walkin_patient_age ||
+          null,
+
+        gender:
+          data.patient_gender ||
+          data.family_member_gender ||
+          data.walkin_patient_gender ||
+          null,
+
+        phone:
+          data.patient_phone ||
+          data.family_member_phone ||
+          data.walkin_patient_phone ||
+          null,
+      },
+    };
+
+    if (req.query.format === "pdf") {
+      const html = generatePrescriptionHTML(response);
+
+      const pdfBuffer = await generatePDF(html);
+
+      res.set({
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="prescription-${appointmentId}.pdf"`,
+        "Content-Length": pdfBuffer.length,
+      });
+
+      return res.send(pdfBuffer);
+    }
+    
+
+    return res.status(200).json(response);
+  } catch (err) {
+    console.error("Get Prescription Error:", err);
+
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
+};
+
+//addPrescription
+
+exports.addPrescription = async (req, res) => {
+  const userId = req.user.id;
+  const { id: appointmentId } = req.params;
+
+  const {
+    symptoms = [],
+    diagnosis = [],
+    medicines = [],
+    tests = [],
+    advice = [],
+    follow_up_after = null,
+    follow_up_date = null,
+    follow_up_notes = null,
+  } = req.body;
+
+  try {
+    
+    const [[doc]] = await db.query("SELECT id FROM doctors WHERE user_id = ?", [
+      userId,
+    ]);
+
+    if (!doc) {
+      return res.status(404).json({
+        message: "Doctor not found",
+      });
+    }
+
+    const doctorId = doc.id;
+    const [[appt]] = await db.query(
+      `
+      SELECT id, patient_id, family_member_id, walkin_patient_id
+      FROM appointments
+      WHERE id = ?
+        AND doctor_id = ?
+        AND status = 'IN_PROGRESS'
+      `,
+      [appointmentId, doctorId],
+    );
+
+    if (!appt) {
+      return res.status(400).json({
+        message: "Prescription allowed only while appointment is in progress",
+      });
+    }
+
+    
+    const patientId =
+      appt.patient_id || appt.family_member_id || appt.walkin_patient_id;
+
+    if (!patientId) {
+      return res.status(400).json({
+        message: "No linked patient found",
+      });
+    }
+
+    
+    const [[existing]] = await db.query(
+      `
+      SELECT id
+      FROM visit_summaries
+      WHERE appointment_id = ?
+      `,
+      [appointmentId],
+    );
+
+    if (existing) {
+      return res.status(409).json({
+        message: "Prescription already added and cannot be modified",
+      });
+    }
+
+  
+    const hasSymptoms = Array.isArray(symptoms) && symptoms.length > 0;
+
+    const hasDiagnosis = Array.isArray(diagnosis) && diagnosis.length > 0;
+
+    const hasMedicines = Array.isArray(medicines) && medicines.length > 0;
+
+    const hasTests = Array.isArray(tests) && tests.length > 0;
+
+    const hasAdvice = Array.isArray(advice) && advice.length > 0;
+
+    if (
+      !hasSymptoms &&
+      !hasDiagnosis &&
+      !hasMedicines &&
+      !hasTests &&
+      !hasAdvice
+    ) {
+      return res.status(400).json({
+        message:
+          "Please add at least one symptom, diagnosis, medicine, test, or advice",
+      });
+    }
+
+    const [result] = await db.query(
+      `
+      INSERT INTO visit_summaries
+      (
+        appointment_id,
+        symptoms,
+        diagnosis,
+        medicines,
+        tests,
+        advice,
+        follow_up_after,
+        follow_up_date,
+        follow_up_notes
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        appointmentId,
+
+        JSON.stringify(symptoms),
+        JSON.stringify(diagnosis),
+        JSON.stringify(medicines),
+        JSON.stringify(tests),
+        JSON.stringify(advice),
+
+        follow_up_after || null,
+        follow_up_date || null,
+        follow_up_notes || null,
+      ],
+    );
+
+    return res.status(201).json({
+      message: "Prescription added successfully",
+      prescription_id: result.insertId,
+    });
+  } catch (err) {
+    console.error("Add Prescription Error:", err);
+
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
+};
+
+
+// getPrescriptionAppointmentDetails
+
+exports.getPrescriptionAppointmentDetails = async (
+  req,
+  res
+) => {
+  const userId = req.user.id;
+
+  const {
+    id: appointmentId,
+  } = req.params;
+
+  try {
+
+    const [[doctor]] =
+      await db.query(
+        `
+        SELECT id
+        FROM doctors
+        WHERE user_id = ?
+        LIMIT 1
+        `,
+        [userId]
+      );
+
+    if (!doctor) {
+      return res.status(404).json({
+        message: "Doctor not found",
+      });
+    }
+
+    const [[data]] =
+      await db.query(
+        `
+        SELECT
+
+          /* ================= APPOINTMENT ================= */
+
+          a.id AS appointment_id,
+          a.doctor_id,
+          a.token_number,
+          a.appointment_date,
+          a.appointment_slot,
+
+          /* ================= NORMAL PATIENT ================= */
+
+          p.id AS patient_id,
+          p.user_id AS patient_user_id,
+          p.fullName AS patient_name,
+
+          TIMESTAMPDIFF(
+            YEAR,
+            p.dob,
+            CURDATE()
+          ) AS patient_age,
+
+          p.gender AS patient_gender,
+          p.phone AS patient_phone,
+
+          /* ================= FAMILY MEMBER ================= */
+
+          fm.id AS family_member_id,
+          fm.patient_id AS family_member_owner_id,
+          fm.full_name AS family_member_name,
+
+          TIMESTAMPDIFF(
+            YEAR,
+            fm.dob,
+            CURDATE()
+          ) AS family_member_age,
+
+          fm.gender AS family_member_gender,
+
+          /* ================= FAMILY OWNER ================= */
+
+          family_patient.id AS family_patient_id,
+          family_patient.user_id AS family_patient_user_id,
+          family_patient.phone AS family_member_phone
+
+        FROM appointments a
+
+        /* NORMAL PATIENT */
+
+        LEFT JOIN patients p
+           ON a.patient_id = p.user_id
+
+        /* FAMILY MEMBER */
+
+        LEFT JOIN family_members fm
+          ON a.family_member_id = fm.id
+
+        /* FAMILY MEMBER OWNER */
+
+        LEFT JOIN patients family_patient
+          ON fm.patient_id =
+             family_patient.id
+
+        WHERE a.id = ?
+          AND a.doctor_id = ?
+
+        LIMIT 1
+        `,
+        [
+          appointmentId,
+          doctor.id,
+        ]
+      );
+
+    if (!data) {
+
+      return res.status(404).json({
+        message:
+          "Appointment not found",
+      });
+    }
+
+    let patientType = "UNKNOWN";
+
+    if (data.family_member_id) {
+      patientType =
+        "FAMILY_MEMBER";
+    } else if (data.patient_id) {
+      patientType =
+        "PATIENT";
+    }
+
+    let patient = {
+      id: null,
+      type: patientType,
+      name: "Unknown",
+      age: null,
+      gender: null,
+      phone: null,
+    };
+
+    if (
+      patientType === "PATIENT"
+    ) {
+
+      patient = {
+        id: data.patient_id,
+
+        type: "PATIENT",
+
+        name:
+          data.patient_name ||
+          "Unknown",
+
+        age:
+          data.patient_age ??
+          null,
+
+        gender:
+          data.patient_gender ??
+          null,
+
+        phone:
+          data.patient_phone ??
+          null,
+      };
+    }
+
+    else if (
+      patientType ===
+      "FAMILY_MEMBER"
+    ) {
+
+      patient = {
+        id:
+          data.family_member_id,
+
+        type:
+          "FAMILY_MEMBER",
+
+        name:
+          data.family_member_name ||
+          "Unknown",
+
+        age:
+          data.family_member_age ??
+          null,
+
+        gender:
+          data.family_member_gender ??
+          null,
+        phone:
+          data.family_member_phone ??
+          null,
+      };
+    }
+
+  
+    return res.status(200).json({
+
+      appointment: {
+        id:
+          data.appointment_id,
+
+        token_number:
+          data.token_number,
+
+        appointment_date:
+          data.appointment_date,
+
+        appointment_slot:
+          data.appointment_slot,
+      },
+
+      patient,
+
+    });
+
+  } catch (err) {
+
+    console.error(
+      "Get Prescription Appointment Details Error:",
+      err
+    );
+
+    return res.status(500).json({
+      message: "Server error",
     });
   }
 };
