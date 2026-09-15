@@ -15,20 +15,53 @@ const sendLoginOTPEmail = async (email, otp) => {
     subject: "YoDoctor Login OTP",
 
     html: `
-      <div style="font-family: Arial, sans-serif;">
+      <div style="
+        font-family: Arial, sans-serif;
+        max-width: 600px;
+        margin: auto;
+        padding: 30px;
+        border: 1px solid #ddd;
+        border-radius: 10px;
+      ">
+
         <h2>YoDoctor Login Verification</h2>
 
-        <p>Your OTP for login is:</p>
+        <p>Hello,</p>
 
-        <h1 style="letter-spacing: 8px;">
+        <p>
+          We received a login request for your YoDoctor account.
+        </p>
+
+        <p>Your verification OTP is:</p>
+
+        <div style="
+          font-size: 32px;
+          font-weight: bold;
+          letter-spacing: 8px;
+          margin: 25px 0;
+        ">
           ${otp}
-        </h1>
+        </div>
 
-        <p>This OTP is valid for <strong>5 minutes</strong>.</p>
+        <p>
+          This OTP is valid for <strong>5 minutes</strong>.
+        </p>
+
+        <p>
+          Do not share this OTP with anyone.
+        </p>
 
         <p>
           If you did not attempt to login, please ignore this email.
         </p>
+
+        <br>
+
+        <p>
+          Regards,<br>
+          <strong>YoDoctor Team</strong>
+        </p>
+
       </div>
     `,
   });

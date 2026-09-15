@@ -327,4 +327,17 @@ router.post(
   doctorController.manualVisitBooking,
 );
 
+router.get(
+  "/prescription/:id",
+  verifyToken,
+  doctorController.getPrescription,
+);
+
+router.get(
+  "/appointments/:id/prescription-details",
+  verifyToken,
+  allowRoles("DOCTOR"),
+  doctorController.getPrescriptionAppointmentDetails,
+);
+
 module.exports = router;
