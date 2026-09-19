@@ -20,6 +20,8 @@ const response = (res, status, success, message) => {
   return res.status(status).json({ success, message });
 };
 
+const { createEmailOTP } = require("../services/otp.service");
+const { sendLoginOTPEmail } = require("../services/emailService");
 
 const buildImageUrl = (req, relativePath) => {
   if (!relativePath) return null;
@@ -38,7 +40,6 @@ const deleteFileIfExists = async (filePath) => {
 
 // common login api for doctor and patients
 
-
 exports.login = async (req, res) => {
   const { identifier, password, portal } = req.body;
 
@@ -50,7 +51,7 @@ exports.login = async (req, res) => {
   }
 
   try {
-    // FIND USER
+    // ================= FIND USER =================
 
     const [users] = await db.query(
       `SELECT
@@ -69,7 +70,7 @@ exports.login = async (req, res) => {
       [identifier, identifier],
     );
 
-    // USER NOT FOUND
+    // ================= USER NOT FOUND =================
 
     if (users.length === 0) {
       // Prevent timing-based user enumeration
@@ -86,7 +87,7 @@ exports.login = async (req, res) => {
 
     const user = users[0];
 
-    // ACCOUNT LOCK CHECK
+    // ================= ACCOUNT LOCK CHECK =================
 
     if (user.lock_until && new Date(user.lock_until) > new Date()) {
       return res.status(423).json({
@@ -95,7 +96,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    // ACTIVE CHECK
+    // ================= ACTIVE CHECK =================
 
     if (user.is_active === 0) {
       return res.status(403).json({
@@ -104,7 +105,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    // DELETED CHECK
+    // ================= DELETED CHECK =================
 
     if (user.is_deleted === 1) {
       return res.status(403).json({
@@ -114,7 +115,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    // PASSWORD CHECK
+    // ================= PASSWORD CHECK =================
 
     const match = await bcrypt.compare(password, user.password);
 
@@ -150,7 +151,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    // PASSWORD IS CORRECT
+    // ================= PASSWORD CORRECT =================
 
     await db.query(
       `UPDATE users
@@ -160,11 +161,11 @@ exports.login = async (req, res) => {
       [user.id],
     );
 
-    // ROLE
+    // ================= ROLE =================
 
     const role = user.role?.trim().toUpperCase();
 
-    // PORTAL VALIDATION
+    // ================= PORTAL VALIDATION =================
 
     if (portal === "DOCTOR" && role !== "DOCTOR") {
       return res.status(403).json({
@@ -180,7 +181,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    // DOCTOR PROFILE CHECK
+    // ================= DOCTOR PROFILE CHECK =================
 
     if (role === "DOCTOR") {
       const [[doctor]] = await db.query(
@@ -200,62 +201,87 @@ exports.login = async (req, res) => {
       }
     }
 
-    // EMAIL OTP
+    
+    // OTP FLOW
+    
 
-    if (!identifier.includes("@")) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Email OTP is currently required for login. Mobile OTP will be added later.",
+    // ================= EMAIL LOGIN =================
+
+    if (identifier.includes("@")) {
+      if (!user.email) {
+        return res.status(400).json({
+          success: false,
+          message: "No email address is registered with this account",
+        });
+      }
+
+      // CREATE EMAIL OTP
+      const { otp, verificationId } = await createEmailOTP(user.id);
+
+      // SEND EMAIL OTP
+      await sendLoginOTPEmail(user.email, otp);
+
+      // MASK EMAIL
+      const [emailName, emailDomain] = user.email.split("@");
+
+      let maskedEmail;
+
+      if (emailName.length <= 2) {
+        maskedEmail = `${emailName[0]}***@${emailDomain}`;
+      } else {
+        maskedEmail = `${emailName.substring(0, 2)}***@${emailDomain}`;
+      }
+
+      return res.status(200).json({
+        success: true,
+        requiresOtp: true,
+        message: "OTP sent to your registered email",
+        verificationId,
+        channel: "EMAIL",
+        destination: maskedEmail,
+        expiresIn: 300,
       });
     }
 
-    // CHECK USER EMAIL
+    const formatIndianMobile = (mobile) => {
+      const value = String(mobile).trim();
 
-    if (!user.email) {
-      return res.status(400).json({
-        success: false,
-        message: "No email address is registered with this account",
+      if (value.startsWith("+91")) {
+        return value;
+      }
+
+      if (value.startsWith("91") && value.length === 12) {
+        return `+${value}`;
+      }
+
+      return `+91${value}`;
+    };
+
+    // ================= MOBILE LOGIN =================
+
+    if (user.mobile) {
+      const formattedMobile = formatIndianMobile(user.mobile);
+
+      console.log("📱 RAW MOBILE:", user.mobile);
+      console.log("📱 FORMATTED MOBILE:", formattedMobile);
+
+      await sendLoginOTPSMS(formattedMobile);
+
+      return res.status(200).json({
+        success: true,
+        requiresOtp: true,
+        message: "OTP sent to your registered mobile number",
+        channel: "SMS",
+        destination: `******${formattedMobile.slice(-4)}`,
+        mobile: formattedMobile,
       });
     }
 
-    // GENERATE OTP
+    // ================= NO VALID CONTACT =================
 
-    const { otp, verificationId } = await createEmailOTP(user.id);
-
-    // SEND OTP TO EMAIL
-
-    console.log("OTP CREATED:", otp);
-console.log("VERIFICATION ID:", verificationId);
-
-    await sendLoginOTPEmail(user.email, otp);
-
-    // MASK EMAIL
-
-    const [emailName, emailDomain] = user.email.split("@");
-
-    let maskedEmail;
-
-    if (emailName.length <= 2) {
-      maskedEmail = `${emailName[0]}***@${emailDomain}`;
-    } else {
-      maskedEmail = `${emailName.substring(0, 2)}***@${emailDomain}`;
-    }
-    // IMPORTANT
-
-    return res.status(200).json({
-      success: true,
-      requiresOtp: true,
-
-      message: "OTP sent to your registered email",
-
-      verificationId,
-
-      channel: "EMAIL",
-
-      destination: maskedEmail,
-
-      expiresIn: 300,
+    return res.status(400).json({
+      success: false,
+      message: "No valid email or mobile number is registered",
     });
   } catch (err) {
     console.error("LOGIN ERROR:", err);
@@ -271,14 +297,14 @@ console.log("VERIFICATION ID:", verificationId);
 // verifyLoginOTP
 
 exports.verifyLoginOTP = async (req, res) => {
-  const { verificationId, otp } = req.body;
+  const { verificationId, otp, channel, mobile } = req.body;
 
   // ================= VALIDATION =================
 
-  if (!verificationId || !otp) {
+  if (!otp) {
     return res.status(400).json({
       success: false,
-      message: "Verification ID and OTP are required",
+      message: "OTP is required",
     });
   }
 
@@ -289,273 +315,425 @@ exports.verifyLoginOTP = async (req, res) => {
     });
   }
 
-  try {
-    // ================= FIND OTP =================
+  
+  // SMS OTP - TWILIO VERIFY
+  
 
-    const [[otpRecord]] = await db.query(
-      `SELECT
-          id,
-          user_id,
-          otp_hash,
-          expires_at,
-          verified_at
-       FROM otp_verifications
-       WHERE verification_id = ?
-         AND purpose = 'LOGIN'
-         AND channel = 'EMAIL'
-       LIMIT 1`,
-      [verificationId],
-    );
-
-    if (!otpRecord) {
+  if (channel === "SMS") {
+    if (!mobile) {
       return res.status(400).json({
         success: false,
-        message: "Invalid OTP verification request",
+        message: "Mobile number is required",
       });
     }
 
-    // ================= OTP ALREADY USED =================
+    try {
+      // ================= GET USER =================
 
-    if (otpRecord.verified_at) {
-      return res.status(400).json({
-        success: false,
-        message: "This OTP has already been used",
-      });
-    }
+      // ================= NORMALIZE MOBILE =================
 
-    // ================= OTP EXPIRED =================
+      const normalizedMobile = String(mobile).replace(/\D/g, "").slice(-10);
 
-    if (new Date(otpRecord.expires_at) < new Date()) {
-      return res.status(400).json({
-        success: false,
-        message: "OTP has expired",
-      });
-    }
+      if (!/^\d{10}$/.test(normalizedMobile)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid mobile number",
+        });
+      }
 
-    // ================= VERIFY OTP =================
+      // Always use Indian format for Twilio
+      const twilioMobile = `+91${normalizedMobile}`;
 
-    const otpMatch = await bcrypt.compare(
-      String(otp),
-      otpRecord.otp_hash,
-    );
+      // ================= GET USER =================
 
-    if (!otpMatch) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid OTP",
-      });
-    }
-
-    // ================= MARK OTP VERIFIED =================
-
-    const [otpUpdate] = await db.query(
-      `UPDATE otp_verifications
-       SET verified_at = NOW()
-       WHERE id = ?
-         AND verified_at IS NULL`,
-      [otpRecord.id],
-    );
-
-    if (otpUpdate.affectedRows === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "OTP has already been used",
-      });
-    }
-
-    // ================= GET USER =================
-
-    const [[user]] = await db.query(
-      `SELECT
-          id,
-          email,
-          mobile,
-          role,
-          is_active,
-          is_deleted
-       FROM users
-       WHERE id = ?
-       LIMIT 1`,
-      [otpRecord.user_id],
-    );
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
-
-    // ================= FINAL SECURITY CHECK =================
-
-    if (user.is_active === 0) {
-      return res.status(403).json({
-        success: false,
-        message: "Account inactive",
-      });
-    }
-
-    if (user.is_deleted === 1) {
-      return res.status(403).json({
-        success: false,
-        message: "Account has been deleted",
-      });
-    }
-
-    const role = user.role?.trim().toUpperCase();
-
-    // =====================================================
-    // DOCTOR FLOW
-    // =====================================================
-
-    if (role === "DOCTOR") {
-      const [[doctor]] = await db.query(
-        `SELECT status, current_step
-         FROM doctors
-         WHERE user_id = ?`,
-        [user.id],
+      const [[user]] = await db.query(
+        `SELECT
+      id,
+      email,
+      mobile,
+      role,
+      is_active,
+      is_deleted
+   FROM users
+   WHERE RIGHT(
+      REPLACE(
+        REPLACE(
+          REPLACE(mobile, '+', ''),
+          ' ', ''
+        ),
+        '-', ''
+      ),
+      10
+   ) = ?
+   LIMIT 1`,
+        [normalizedMobile],
       );
 
-      if (!doctor) {
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      // ================= VERIFY TWILIO OTP =================
+
+      return await verifyTwilioAndLogin(user, twilioMobile, otp, res);
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      // ================= VERIFY TWILIO OTP =================
+
+      return await verifyTwilioAndLogin(user, mobile, otp, res);
+    } catch (error) {
+      console.error("SMS LOGIN OTP ERROR:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Server error",
+      });
+    }
+  }
+
+  
+  // EMAIL OTP
+  
+
+  if (channel === "EMAIL") {
+    if (!verificationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Verification ID is required for email OTP",
+      });
+    }
+
+    try {
+      // ================= FIND OTP =================
+
+      const [[otpRecord]] = await db.query(
+        `SELECT
+            id,
+            user_id,
+            otp_hash,
+            expires_at,
+            verified_at
+         FROM otp_verifications
+         WHERE verification_id = ?
+           AND purpose = 'LOGIN'
+           AND channel = 'EMAIL'
+         LIMIT 1`,
+        [verificationId],
+      );
+
+      if (!otpRecord) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid OTP verification request",
+        });
+      }
+
+      // ================= OTP ALREADY USED =================
+
+      if (otpRecord.verified_at) {
+        return res.status(400).json({
+          success: false,
+          message: "This OTP has already been used",
+        });
+      }
+
+      // ================= OTP EXPIRED =================
+
+      if (new Date(otpRecord.expires_at) < new Date()) {
+        return res.status(400).json({
+          success: false,
+          message: "OTP has expired",
+        });
+      }
+
+      // ================= VERIFY OTP =================
+
+      const otpMatch = await bcrypt.compare(String(otp), otpRecord.otp_hash);
+
+      if (!otpMatch) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid OTP",
+        });
+      }
+
+      // ================= MARK OTP VERIFIED =================
+
+      const [otpUpdate] = await db.query(
+        `UPDATE otp_verifications
+         SET verified_at = NOW()
+         WHERE id = ?
+           AND verified_at IS NULL`,
+        [otpRecord.id],
+      );
+
+      if (otpUpdate.affectedRows === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "OTP has already been used",
+        });
+      }
+
+      // ================= GET USER =================
+
+      const [[user]] = await db.query(
+        `SELECT
+            id,
+            email,
+            mobile,
+            role,
+            is_active,
+            is_deleted
+         FROM users
+         WHERE id = ?
+         LIMIT 1`,
+        [otpRecord.user_id],
+      );
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      // ================= FINAL SECURITY CHECK =================
+
+      if (user.is_active === 0) {
         return res.status(403).json({
           success: false,
-          message: "Doctor profile not found. Contact admin.",
+          message: "Account inactive",
         });
       }
 
-      // JWT
-
-      const token = jwt.sign(
-        {
-          id: user.id,
-          role: user.role,
-          email: user.email,
-        },
-        process.env.JWT_SECRET,
-        {
-          expiresIn: process.env.JWT_EXPIRES_IN || "1d",
-        },
-      );
-
-      // IN_PROGRESS
-
-      if (doctor.status === "IN_PROGRESS") {
-        return res.status(200).json({
-          success: true,
-          message: "Resume registration",
-          redirect: "resume",
-          nextStep: doctor.current_step + 1,
-          status: doctor.status,
-          data: {
-            token,
-          },
+      if (user.is_deleted === 1) {
+        return res.status(403).json({
+          success: false,
+          message: "Account has been deleted",
         });
       }
 
-      // PENDING
+      // ================= COMPLETE LOGIN =================
 
-      if (doctor.status === "PENDING") {
-        return res.status(200).json({
-          success: true,
-          message: "Profile under verification",
-          redirect: "waiting-approval",
-          status: doctor.status,
-          data: {
-            token,
-          },
-        });
-      }
+      return await completeLoginAfterOTP(user, res);
+    } catch (err) {
+      console.error("VERIFY EMAIL LOGIN OTP ERROR:", err);
 
-      // APPROVED
-
-      if (doctor.status === "APPROVED") {
-        return res.status(200).json({
-          success: true,
-          message: "Login successful",
-          redirect: "dashboard",
-          status: doctor.status,
-          data: {
-            token,
-          },
-        });
-      }
-
-      return res.status(403).json({
+      return res.status(500).json({
         success: false,
-        message: "Doctor account is not allowed to login",
+        message: "Server error",
+        error: err.message,
+      });
+    }
+  }
+
+  
+  // INVALID CHANNEL
+  
+
+  return res.status(400).json({
+    success: false,
+    message: "Invalid OTP channel",
+  });
+};
+
+// TWILIO SMS OTP VERIFICATION
+
+const verifyTwilioAndLogin = async (user, mobile, otp, res) => {
+  try {
+    const result = await verifyLoginOTPSMS(mobile, otp);
+
+    if (!result.success) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid or expired OTP",
       });
     }
 
-    // =====================================================
-    // PATIENT FLOW
-    // =====================================================
+    // OTP verified successfully
+    return await completeLoginAfterOTP(user, res);
+  } catch (error) {
+    console.error("TWILIO OTP VERIFICATION ERROR:", error);
 
-    if (role === "PATIENT") {
-      const token = jwt.sign(
-        {
-          id: user.id,
-          role: user.role,
-          email: user.email,
-        },
-        process.env.JWT_SECRET,
-        {
-          expiresIn: process.env.JWT_EXPIRES_IN || "1d",
-        },
-      );
+    return res.status(401).json({
+      success: false,
+      message: "Invalid or expired OTP",
+    });
+  }
+};
 
+// COMPLETE LOGIN AFTER OTP
+
+const completeLoginAfterOTP = async (user, res) => {
+  // ================= FINAL SECURITY CHECK =================
+
+  if (user.is_active === 0) {
+    return res.status(403).json({
+      success: false,
+      message: "Account inactive",
+    });
+  }
+
+  if (user.is_deleted === 1) {
+    return res.status(403).json({
+      success: false,
+      message: "Account has been deleted",
+    });
+  }
+
+  const role = user.role?.trim().toUpperCase();
+
+  
+  // DOCTOR FLOW
+  
+
+  if (role === "DOCTOR") {
+    const [[doctor]] = await db.query(
+      `SELECT status, current_step
+       FROM doctors
+       WHERE user_id = ?`,
+      [user.id],
+    );
+
+    if (!doctor) {
+      return res.status(403).json({
+        success: false,
+        message: "Doctor profile not found. Contact admin.",
+      });
+    }
+
+    // ================= JWT =================
+
+    const token = jwt.sign(
+      {
+        id: user.id,
+        role: user.role,
+        email: user.email,
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: process.env.JWT_EXPIRES_IN || "1d",
+      },
+    );
+
+    // ================= IN_PROGRESS =================
+
+    if (doctor.status === "IN_PROGRESS") {
+      return res.status(200).json({
+        success: true,
+        message: "Resume registration",
+        redirect: "resume",
+        nextStep: doctor.current_step + 1,
+        status: doctor.status,
+        data: {
+          token,
+        },
+      });
+    }
+
+    // ================= PENDING =================
+
+    if (doctor.status === "PENDING") {
+      return res.status(200).json({
+        success: true,
+        message: "Profile under verification",
+        redirect: "waiting-approval",
+        status: doctor.status,
+        data: {
+          token,
+        },
+      });
+    }
+
+    // ================= APPROVED =================
+
+    if (doctor.status === "APPROVED") {
       return res.status(200).json({
         success: true,
         message: "Login successful",
         redirect: "dashboard",
+        status: doctor.status,
         data: {
           token,
         },
       });
     }
-
-    // =====================================================
-    // ADMIN FLOW
-    // =====================================================
-
-    if (role === "ADMIN") {
-      const token = jwt.sign(
-        {
-          id: user.id,
-          role: user.role,
-          email: user.email,
-        },
-        process.env.JWT_SECRET,
-        {
-          expiresIn: process.env.JWT_EXPIRES_IN || "1d",
-        },
-      );
-
-      return res.status(200).json({
-        success: true,
-        message: "Admin login successful",
-        redirect: "admin-dashboard",
-        data: {
-          token,
-        },
-      });
-    }
-
-    // ================= INVALID ROLE =================
 
     return res.status(403).json({
       success: false,
-      message: "Invalid role",
-    });
-
-  } catch (err) {
-    console.error("VERIFY LOGIN OTP ERROR:", err);
-
-    return res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: err.message,
+      message: "Doctor account is not allowed to login",
     });
   }
+
+  
+  // PATIENT FLOW
+  
+
+  if (role === "PATIENT") {
+    const token = jwt.sign(
+      {
+        id: user.id,
+        role: user.role,
+        email: user.email,
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: process.env.JWT_EXPIRES_IN || "1d",
+      },
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Login successful",
+      redirect: "dashboard",
+      data: {
+        token,
+      },
+    });
+  }
+
+  
+  // ADMIN FLOW
+  
+
+  if (role === "ADMIN") {
+    const token = jwt.sign(
+      {
+        id: user.id,
+        role: user.role,
+        email: user.email,
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: process.env.JWT_EXPIRES_IN || "1d",
+      },
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Admin login successful",
+      redirect: "admin-dashboard",
+      data: {
+        token,
+      },
+    });
+  }
+
+  // ================= INVALID ROLE =================
+
+  return res.status(403).json({
+    success: false,
+    message: "Invalid role",
+  });
 };
 
 // forget password through email or mobile number
